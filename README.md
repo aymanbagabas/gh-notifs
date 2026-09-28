@@ -15,8 +15,7 @@ The demo uses fake data.
 gh extension install aymanbagabas/gh-notifs
 ```
 
-You also need bash 4 or later, and fzf 0.63 or later for the picker. On macOS,
-`/bin/bash` is 3.2, so install a newer bash, for example with Homebrew.
+You also need fzf 0.63 or later for the picker.
 
 To run a clone of this repository, run `gh extension install .` in the clone.
 
