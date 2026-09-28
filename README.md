@@ -59,3 +59,7 @@ These limits apply:
 `demo/gh` is a fake gh. It answers from `demo/data.json`. To record the demo
 again, run `vhs demo/demo.tape` in the root of the repository. You need VHS
 0.12.1 or later, jq, fzf, and gum.
+
+## License
+
+[MIT](LICENSE)
