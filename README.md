@@ -15,9 +15,16 @@ The demo uses fake data.
 gh extension install aymanbagabas/gh-notifs
 ```
 
-You also need fzf 0.63 or later for the picker.
+Then run `gh notifs`. To update it, run `gh extension upgrade notifs`. The
+picker needs fzf 0.63 or later.
 
-To run a clone of this repository, run `gh extension install .` in the clone.
+To change the script, install it from a clone. gh then runs the clone:
+
+```sh
+git clone https://github.com/aymanbagabas/gh-notifs
+cd gh-notifs
+gh extension install .
+```
 
 ## Usage
 
