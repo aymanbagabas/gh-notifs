@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# A fake gh for the demo. It runs gh-notifs for "gh notifs", and it answers the
+# gh calls of gh-notifs from data.json, so the demo shows no real data. In
+# data.json, updatedAt is the number of seconds before now.
+
+set -euo pipefail
+
+dir=$(cd "$(dirname "$0")" && pwd)
+data=$dir/data.json
+
+case $1 in
+notifs)
+	# Like gh, tell the extension that gh runs it, and where gh is.
+	shift
+	GH_EXTENSION=1 GH_PATH=$dir/gh exec "$dir/../gh-notifs" "$@"
+	;;
+api)
+	# gh api graphql -F q=QUERY ... --jq FILTER. Keep the items that match all
+	# the @me qualifiers of the query.
+	q="" filter=""
+	while (($#)); do
+		case $1 in
+		-F | -f)
+			if [[ $2 == q=* ]]; then
+				q=${2#q=}
+			fi
+			shift 2
+			;;
+		--jq)
+			filter=$2
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+	jq --arg q "$q" '
+		[$q | scan("([a-z-]+):@me") | .[0]] as $want
+		| .data.search.nodes |= map(
+			select(._q as $have | all($want[]; IN($have[])))
+			| .updatedAt |= (now - . | todate))' "$data" | jq -r "$filter"
+	;;
+pr | issue)
+	# gh pr view -R owner/repo N, or gh issue view -R owner/repo N. Like gh, fail
+	# if N is an item of the other type.
+	page=$(jq -r --arg type "$1" --arg repo "$4" --argjson n "$5" '
+		def c($code): "\u001b[\($code)m\(.)\u001b[0m";
+		def plural($n; $unit): "\($n) \($unit)\(if $n == 1 then "" else "s" end)";
+		def ago:
+			if . < 3600 then plural(. / 60 | floor; "minute")
+			elif . < 86400 then plural(. / 3600 | floor; "hour")
+			else plural(. / 86400 | floor; "day") end + " ago";
+		.data.search.nodes[]
+		| select(.repository.nameWithOwner == $repo and .number == $n)
+		| select((.__typename == "PullRequest") == ($type == "pr"))
+		| (if $type == "pr" then "pull request" else "issue" end) as $kind
+		| (if .isDraft then "Draft" else .state | .[:1] + (.[1:] | ascii_downcase) end) as $state
+		| {Open: 32, Draft: 90, Merged: 35, Closed: (if $type == "pr" then 31 else 35 end)} as $colors
+		| "\(.title | c(1)) \("\($repo)#\($n)" | c(90))",
+		  "\($state | c($colors[$state])) • \(.author.login) opened this \($kind) • updated \(.updatedAt | ago)",
+		  "",
+		  (._body | split("\n")[] | "  \(.)"),
+		  "",
+		  ("View this \($kind) on GitHub: \(.url)" | c(90))' "$data")
+	[[ -n $page ]] || exit 1
+	printf '%s\n' "$page"
+	;;
+browse)
+	# gh browse -R owner/repo N
+	jq -r --arg repo "$3" --argjson n "$4" '.data.search.nodes[]
+		| select(.repository.nameWithOwner == $repo and .number == $n)
+		| "Opening \(.url | ltrimstr("https://")) in your browser."' "$data" >&2
+	;;
+esac
