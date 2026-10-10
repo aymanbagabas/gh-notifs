@@ -69,7 +69,7 @@ func TestHelpExpandsFooterAndRestoresInbox(t *testing.T) {
 		t.Fatal("help caption erased the top border")
 	}
 	out := text.String(sc, color.Disabled)
-	for _, want := range []string{"Fix slow uploads", "Refreshed", "? Close help", "j/k, arrows", "refresh", "Try: is:unread", "Navigate", "Actions", "Search"} {
+	for _, want := range []string{"Fix slow uploads", "Refreshed", "? Close help", "j/k, arrows", "refresh", "Try: is:issue-or-pull-request", "Navigate", "Actions", "Search"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expanded footer lost %q", want)
 		}

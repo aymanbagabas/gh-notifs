@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -162,22 +163,34 @@ func (c *Client) Login(ctx context.Context) (string, error) {
 	return user.Login, nil
 }
 
+// Endpoint builds one request. Split a user query with Query.Requests first.
 func Endpoint(q Query, page int) string {
 	path := "notifications"
 	values := url.Values{"all": {"true"}, "per_page": {"50"}, "page": {strconv.Itoa(page)}}
+	states := q.values("is")
+	if slices.Contains(states, "unread") && !slices.Contains(states, "read") {
+		values.Set("all", "false")
+	}
+	if q.participatingOnly() {
+		values.Set("participating", "true")
+	}
+	bounds := make(map[string]time.Time)
 	for _, term := range q.Terms {
 		switch term.Field {
 		case "repo":
 			owner, repo, _ := strings.Cut(term.Value, "/")
 			path = "repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/notifications"
+			values.Set("per_page", "100")
 		case "since", "before":
 			when, _ := ParseDate(term.Value)
-			values.Set(term.Field, when.UTC().Format(time.RFC3339))
-		case "is":
-			if term.Value == "unread" {
-				values.Set("all", "false")
+			bound, ok := bounds[term.Field]
+			if !ok || term.Field == "since" && when.After(bound) || term.Field == "before" && when.Before(bound) {
+				bounds[term.Field] = when
 			}
 		}
+	}
+	for field, when := range bounds {
+		values.Set(field, when.UTC().Format(time.RFC3339))
 	}
 	return path + "?" + values.Encode()
 }
@@ -253,17 +266,23 @@ func (c *Client) page(ctx context.Context, endpoint string) (Page, error) {
 }
 
 func (c *Client) Cached(q Query, limit int) Result {
-	result := Result{FromCache: true}
 	c.mu.Lock()
 	cache := c.Cache
 	c.mu.Unlock()
-	if cache == nil {
-		return result
+	if cache == nil || q.NeedsDetails() {
+		return Result{FromCache: true}
 	}
-	if q.NeedsDetails() {
-		return result
+	var results []Result
+	for _, request := range q.Requests() {
+		results = append(results, cachedRequest(cache, request, limit))
 	}
+	return mergeResults(results, limit)
+}
+
+func cachedRequest(cache *Cache, q Query, limit int) Result {
+	result := Result{FromCache: true}
 	seen := make(map[string]bool)
+	participating := q.participatingOnly()
 	for n := 1; ; n++ {
 		p, ok := cache.Get(Endpoint(q, n))
 		if !ok {
@@ -274,7 +293,7 @@ func (c *Client) Cached(q Query, limit int) Result {
 			result.CheckedAt = p.CheckedAt
 		}
 		for _, item := range p.Items {
-			if !seen[item.ID] && q.Match(item, "") {
+			if !seen[item.ID] && q.match(item, "", participating) {
 				seen[item.ID] = true
 				result.Items = append(result.Items, item)
 			}
@@ -303,7 +322,7 @@ func (c *Client) Fetch(ctx context.Context, q Query, limit int, progress func(Re
 	}()
 	login := ""
 	for _, term := range q.Terms {
-		if term.Field == "author" && term.Value == "@me" {
+		if term.Field == "author" && strings.EqualFold(term.Value, "@me") {
 			login, err = c.Login(ctx)
 			if err != nil {
 				return result, err
@@ -311,7 +330,69 @@ func (c *Client) Fetch(ctx context.Context, q Query, limit int, progress func(Re
 			break
 		}
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	requests := q.Requests()
+	results := make([]Result, len(requests))
+	errs := make([]error, len(requests))
+	for i := range results {
+		results[i].More = true
+	}
+	var mu sync.Mutex
+	update := func(i int, r Result) {
+		mu.Lock()
+		defer mu.Unlock()
+		results[i] = r
+		if progress != nil {
+			progress(mergeResults(results, limit))
+		}
+	}
+	var wg sync.WaitGroup
+	for i, request := range requests {
+		wg.Go(func() {
+			r, err := c.fetchRequest(ctx, request, login, limit, func(r Result) { update(i, r) })
+			if err != nil {
+				errs[i] = fmt.Errorf("%s: %w", Endpoint(request, 1), err)
+				r.More = true
+				cancel()
+			}
+			mu.Lock()
+			results[i] = r
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	return mergeResults(results, limit), errors.Join(errs...)
+}
+
+func mergeResults(results []Result, limit int) Result {
+	merged := Result{FromCache: true}
+	for _, result := range results {
+		merged.Items = append(merged.Items, result.Items...)
+		merged.More = merged.More || result.More
+		merged.FromCache = merged.FromCache && result.FromCache
+		merged.Pages += result.Pages
+		if !result.CheckedAt.IsZero() && (merged.CheckedAt.IsZero() || result.CheckedAt.Before(merged.CheckedAt)) {
+			merged.CheckedAt = result.CheckedAt
+		}
+	}
+	Sort(merged.Items)
 	seen := make(map[string]bool)
+	items := merged.Items[:0]
+	for _, item := range merged.Items {
+		if !seen[item.ID] {
+			seen[item.ID] = true
+			items = append(items, item)
+		}
+	}
+	merged.More = merged.More || len(items) > limit
+	merged.Items = items[:min(limit, len(items))]
+	return merged
+}
+
+func (c *Client) fetchRequest(ctx context.Context, q Query, login string, limit int, progress func(Result)) (result Result, err error) {
+	seen := make(map[string]bool)
+	participating := q.participatingOnly()
 	for n := 1; ; n++ {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -326,7 +407,7 @@ func (c *Client) Fetch(ctx context.Context, q Query, limit int, progress func(Re
 			}
 		}
 		for _, item := range p.Items {
-			if !seen[item.ID] && q.Match(item, login) {
+			if !seen[item.ID] && q.match(item, login, participating) {
 				seen[item.ID] = true
 				result.Items = append(result.Items, item)
 			}

@@ -62,7 +62,7 @@ func (a *app) suggestions() ([]string, int, int) {
 				"discussion", "release", "commit", "check-suite", "repository-invitation",
 				"repository-vulnerability-alert", "repository-advisory", "gist"}
 		case "reason":
-			values = []string{"assign", "author", "ci-activity", "comment", "invitation", "manual",
+			values = []string{"assign", "author", "ci-activity", "comment", "invitation", "manual", "participating",
 				"mention", "review-requested", "security-alert", "state-change", "subscribed", "team-mention"}
 		case "state":
 			values = []string{"open", "closed", "merged", "draft"}

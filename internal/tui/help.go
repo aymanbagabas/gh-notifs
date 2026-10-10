@@ -22,8 +22,11 @@ func helpRows(sc *screen.Screen, width int) [][]helpPart {
 	}
 	var rows [][]helpPart
 	for _, prompt := range []string{
-		"Press / to search. Combine terms to narrow your inbox.",
-		"Try: is:unread reason:review-requested",
+		"Press / to search. Repeated filter values are alternatives; every group must match.",
+		"Type and read status are separate groups. Try: is:issue-or-pull-request is:release is:unread",
+		"is:issue, is:pr, and is:pull-request all select both issues and pull requests, like the website.",
+		"Try: reason:mention reason:comment",
+		"Every title term and date bound must match. AND and OR are title words, not operators.",
 		"Try: repo:OWNER/REPO state:open \"title text\"",
 		"",
 	} {

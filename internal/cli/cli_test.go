@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 )
 
 func runCommand(t *testing.T, input string, args ...string) (string, string, error) {
@@ -170,6 +172,34 @@ func TestHelpAndVersionNeedNoAuthentication(t *testing.T) {
 	out, _, err := runCommand(t, "", "help", "list")
 	if err != nil || !strings.Contains(out, "gh-notifs list") {
 		t.Fatalf("subcommand help: %q, %v", out, err)
+	}
+}
+
+func TestScopeFlagsAddAlternatives(t *testing.T) {
+	for _, opts := range []options{
+		{repo: "cli/cli", queryText: "repo:cli/go-gh is:unread"},
+		{org: "cli", queryText: "org:acme is:unread"},
+	} {
+		original := opts
+		q, err := opts.scopedQuery("github.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		repos := []string{"cli/cli", "cli/go-gh"}
+		if opts.org != "" {
+			repos = []string{"cli/cli", "acme/app"}
+		} else if len(q.Requests()) != 2 {
+			t.Fatal("repository flag did not produce two request alternatives")
+		}
+		for _, repo := range repos {
+			if !q.Match(notifs.Thread{Repository: repo, Unread: true}, "") ||
+				q.Match(notifs.Thread{Repository: repo}, "") {
+				t.Fatalf("scope %q did not preserve read-state filtering: %+v", repo, q)
+			}
+		}
+		if q.Match(notifs.Thread{Repository: "other/other", Unread: true}, "") || opts != original {
+			t.Fatal("scope escaped its group or mutated caller options")
+		}
 	}
 }
 

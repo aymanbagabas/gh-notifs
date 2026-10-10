@@ -20,7 +20,11 @@ const DefaultText = `# gh-notifs configuration
 # Examples: repo:cli/cli is:unread, org:acme reason:review-requested
 # Quote YAML strings. Supported fields:
 # repo, org, reason, is, author, state, since, before, and quoted title text.
-# Dates use YYYY-MM-DD or RFC3339. Terms combine with AND.
+# Repeated filter values are alternatives. Each filter group must match.
+# Type and read status are separate groups.
+# is:issue, is:pr, and is:pull-request all mean is:issue-or-pull-request.
+# Every title term and date bound must match. AND and OR are title words.
+# Dates use YYYY-MM-DD or RFC3339. Repeated dates use the strictest bounds.
 # Use scopes: [] to show only the repository groups.
 scopes:
   - name: Inbox

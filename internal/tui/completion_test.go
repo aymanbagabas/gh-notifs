@@ -63,6 +63,10 @@ func TestCompletionKeysAtCursor(t *testing.T) {
 		{"legacy NUL", "is:unread |", []string{"ctrl+@", "tab"}, "is:unread repo:|"},
 		{"field name", "rea|", []string{"ctrl+space", "enter"}, "reason:|"},
 		{"field values", "state:|", []string{"ctrl+space", "tab"}, "state:open|"},
+		{"participation reason", "reason:part|", []string{"tab"}, "reason:participating|"},
+		{"repeated reason", "reason:mention reason:comm| is:unread", []string{"tab"}, "reason:mention reason:comment| is:unread"},
+		{"repeated type", "is:issue is:p| is:unread", []string{"tab"}, "is:issue is:pr| is:unread"},
+		{"repeated read state", "is:read is:un|", []string{"tab"}, "is:read is:unread|"},
 		{"middle term", "org:acme is:un| state:open", []string{"ctrl+space", "tab"}, "org:acme is:unread| state:open"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

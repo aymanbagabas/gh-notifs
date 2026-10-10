@@ -115,29 +115,51 @@ Cached notifications can contain private repository information.
 
 ## Filter notifications
 
-Query terms combine with **AND**:
+Repeated values are alternatives within each group: repositories, owners, authors, reasons, issue states, types, or read states.
+Every group must match.
+Type and read state are separate groups, even though both use `is:`.
+For example, `is:issue-or-pull-request is:release is:unread` selects unread issues, pull requests, and releases.
+`is:read is:unread` includes both read states.
+
+Every title term and date bound must match.
+`AND` and `OR` are ordinary title words, not query operators.
+`-R` and `--org` add alternatives to their respective `repo:` and `org:` groups.
+For example, `-R cli/cli -q 'repo:cli/go-gh'` includes both repositories.
 
 ```sh
 gh-notifs --global -q 'is:unread reason:mention'
-gh-notifs -R cli/cli -q 'is:pr state:open'
+gh-notifs --global -q 'reason:participating is:unread'
+gh-notifs -R cli/cli -q 'is:issue-or-pull-request state:open'
 gh-notifs --global -q 'author:@me since:2026-10-01'
 gh-notifs --global -q '"slow uploads"'
+gh-notifs --global -q 'reason:mention reason:comment is:unread'
+gh-notifs -q 'repo:cli/cli repo:cli/go-gh is:issue-or-pull-request is:release'
 ```
 
 | Filter | Examples |
 | --- | --- |
 | Repository or owner | `repo:cli/cli`, `org:acme` |
 | Read state | `is:read`, `is:unread` |
-| Type | `is:issue`, `is:pr`, `is:discussion`, `is:release`, `is:commit` |
-| Notification reason | `reason:mention`, `reason:review-requested`, `reason:subscribed` |
+| Type | `is:issue-or-pull-request`, `is:discussion`, `is:release`, `is:commit` |
+| Notification reason | `reason:mention`, `reason:participating`, `reason:review-requested`, `reason:subscribed` |
 | Author | `author:octocat`, `author:@me` |
 | Issue or pull request state | `state:open`, `state:closed`, `state:merged`, `state:draft` |
 | Update time | `since:2026-10-01`, `before:2026-11-01` |
 | Title text | `"slow uploads"` |
 
+Like the website, `is:issue`, `is:pr`, and `is:pull-request` each select **both issues and pull requests**.
+All three are aliases for `is:issue-or-pull-request`; they do not separate the two types.
+See GitHub's [custom filter limitations](https://docs.github.com/en/subscriptions-and-notifications/reference/inbox-filters#custom-filter-limitations).
 Author and state filters apply to issues and pull requests.
+`reason:participating` uses the REST parameter `participating=true`; it is not a notification reason value.
+Requests also use this optimization when every reason alternative is `author`, `comment`, `mention`, or `participating`.
+Specific reason filters still apply locally.
+When other alternatives accompany `reason:participating`, separate requests preserve participation membership and the other reasons.
+For example, `reason:participating reason:subscribed` merges participating notifications with subscribed notifications.
+The public API does not guarantee exact equivalence with the website's participation filter.
 Dates use notification update times and accept `YYYY-MM-DD` or RFC3339.
 Date-only values use midnight UTC; `since` and `before` exclude the boundary itself.
+Repeated dates use the latest `since` and earliest `before`, regardless of term order.
 Use `gh-notifs --help` for more query examples.
 
 ## Use notifications in scripts
@@ -230,8 +252,8 @@ scopes:
     query: ""
   - name: My reviews
     query: "is:unread reason:review-requested"
-  - name: CLI issues
-    query: "repo:cli/cli is:issue"
+  - name: CLI issues and pull requests
+    query: "repo:cli/cli is:issue-or-pull-request"
 ```
 
 Each scope replaces the complete query, including any repository filter.
@@ -257,6 +279,11 @@ The scripts complete commands, flags, and configuration paths for `gh-notifs`, n
 ## API limits
 
 REST provides notifications and read state. GraphQL adds issue and pull request details.
+API requests fetch up to 50 notifications globally or 100 from a single repository.
+Each distinct `repo:` value uses its repository endpoint. Multiple repository requests run concurrently and paginate independently.
+Results merge by notification ID and sort by newest notification update time before the shared result limit applies.
+The cache follows the same request plan. A failed request produces an error, not a successful partial result.
+The `-L` option sets the displayed result count, independently of the API page size.
 Some notification types have only a basic preview.
 The supported API does not provide mark unread, saved items, or done history.
 Website filters do not synchronize with sidebar scopes.
@@ -270,7 +297,7 @@ make check    # Run go vet
 make example  # Run offline examples
 ```
 
-The [examples](examples) cover TSV output, themes, configuration, previews, and discussions.
+The [examples](examples) cover API queries, TSV output, themes, configuration, previews, and discussions.
 
 ## License
 

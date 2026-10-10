@@ -24,12 +24,20 @@ Read and unread notifications are included by default.
 
 Query fields:
   repo:OWNER/REPO org:ORG reason:review-requested is:read is:unread
-  is:pr is:issue is:discussion is:release is:commit is:check-suite
+  reason:participating
+  is:issue-or-pull-request is:discussion is:release is:commit is:check-suite
   author:LOGIN author:@me state:open state:closed state:merged state:draft
   since:YYYY-MM-DD before:YYYY-MM-DD "title text"
 Dates use notification update times. RFC3339 timestamps also work.
 Author and state filters currently apply to issues and pull requests.
 Unsupported fields and website-only states produce an error.
+Like the website, is:issue, is:pr, and is:pull-request each select both
+issues and pull requests. They are aliases for is:issue-or-pull-request.
+Repeated values in each filter group are alternatives.
+Type and read status are separate groups; every group must match.
+Every title term and date bound must match. AND and OR are title words,
+not operators. -R and --org add alternatives to repo: and org: groups.
+Multiple repo: values use concurrent repository requests with one result limit.
 
 TSV columns (no header unless --header):
   id unread updated_at last_read_at repository type reason reference
@@ -65,6 +73,7 @@ func newCommand(version string) (*cobra.Command, error) {
 		Example: `  gh-notifs
   gh-notifs --global -q 'reason:review-requested'
   gh-notifs list -R cli/cli -q 'is:unread' -L 10
+  gh-notifs list -R cli/cli -q 'repo:cli/go-gh reason:mention reason:comment'
   gh-notifs list -L 10 --header
   gh-notifs list -L 1 | gh-notifs open
   gh-notifs read 123456789
@@ -77,9 +86,9 @@ func newCommand(version string) (*cobra.Command, error) {
 	}
 	root.SetVersionTemplate("{{.Root.Version}}\n")
 	flags := root.PersistentFlags()
-	flags.StringVarP(&opts.queryText, "query", "q", "", "Filter notifications with a `query`; terms combine with AND")
-	flags.StringVarP(&opts.repo, "repo", "R", "", "Scope to `[HOST/]OWNER/REPO`")
-	flags.StringVar(&opts.org, "org", "", "Scope to an `organization`")
+	flags.StringVarP(&opts.queryText, "query", "q", "", "Filter notifications with a `query`; repeated values are alternatives")
+	flags.StringVarP(&opts.repo, "repo", "R", "", "Add `[HOST/]OWNER/REPO` to the query's repository alternatives")
+	flags.StringVar(&opts.org, "org", "", "Add an `organization` to the query's owner alternatives")
 	flags.StringVar(&opts.host, "hostname", "", "GitHub `host`; defaults to the gh configuration")
 	flags.StringVar(&opts.configPath, "config", "", "Scope configuration `file` (interactive inbox only)")
 	flags.BoolVar(&opts.global, "global", false, "Ignore the current repository")
@@ -153,8 +162,8 @@ func newCommand(version string) (*cobra.Command, error) {
 
 func (opts options) run(cmd *cobra.Command, command string, args []string) error {
 	ctx := cmd.Context()
-	queryText, repo, org, host, configPath := opts.queryText, opts.repo, opts.org, opts.host, opts.configPath
-	global, header, noColor, limit, page := opts.global, opts.header, opts.noColor, opts.limit, opts.page
+	host, configPath := opts.host, opts.configPath
+	header, noColor, limit, page := opts.header, opts.noColor, opts.limit, opts.page
 	if limit < 1 || page < 1 || limit > int(^uint(0)>>1)/page {
 		return fmt.Errorf("--limit and --page must be positive and their product must fit an integer")
 	}
@@ -184,41 +193,7 @@ func (opts options) run(cmd *cobra.Command, command string, args []string) error
 			return client.Action(ctx, id, command)
 		})
 	}
-	if (repo != "" && org != "") || (global && (repo != "" || org != "")) {
-		return fmt.Errorf("--repo, --org, and --global are mutually exclusive")
-	}
-	query, err := notifs.ParseQuery(queryText)
-	if err != nil {
-		return err
-	}
-	hasScope := false
-	for _, term := range query.Terms {
-		hasScope = hasScope || term.Field == "repo" || term.Field == "org"
-	}
-	if repo == "" && org == "" && !global && !hasScope {
-		if current, err := repository.Current(); err == nil && current.Host == host {
-			repo = current.Owner + "/" + current.Name
-		} else if err != nil && os.Getenv("GH_REPO") != "" {
-			return fmt.Errorf("resolve GH_REPO: %w", err)
-		}
-	}
-	if repo != "" {
-		parsed, err := repository.ParseWithHost(repo, host)
-		if err != nil {
-			return err
-		}
-		if parsed.Host != host {
-			return fmt.Errorf("repository host differs from --hostname")
-		}
-		queryText = "repo:" + parsed.Owner + "/" + parsed.Name + " " + queryText
-	}
-	if org != "" {
-		if strings.ContainsAny(org, " \t\n/:") {
-			return fmt.Errorf("invalid organization name")
-		}
-		queryText = "org:" + org + " " + queryText
-	}
-	query, err = notifs.ParseQuery(strings.TrimSpace(queryText))
+	query, err := opts.scopedQuery(host)
 	if err != nil {
 		return err
 	}
@@ -257,6 +232,45 @@ func (opts options) run(cmd *cobra.Command, command string, args []string) error
 		}
 	}
 	return WriteTSV(cmd.OutOrStdout(), items)
+}
+
+func (opts options) scopedQuery(host string) (notifs.Query, error) {
+	queryText, repo, org := opts.queryText, opts.repo, opts.org
+	if (repo != "" && org != "") || (opts.global && (repo != "" || org != "")) {
+		return notifs.Query{}, fmt.Errorf("--repo, --org, and --global are mutually exclusive")
+	}
+	query, err := notifs.ParseQuery(queryText)
+	if err != nil {
+		return notifs.Query{}, err
+	}
+	hasScope := false
+	for _, term := range query.Terms {
+		hasScope = hasScope || term.Field == "repo" || term.Field == "org"
+	}
+	if repo == "" && org == "" && !opts.global && !hasScope {
+		if current, err := repository.Current(); err == nil && current.Host == host {
+			repo = current.Owner + "/" + current.Name
+		} else if err != nil && os.Getenv("GH_REPO") != "" {
+			return notifs.Query{}, fmt.Errorf("resolve GH_REPO: %w", err)
+		}
+	}
+	if repo != "" {
+		parsed, err := repository.ParseWithHost(repo, host)
+		if err != nil {
+			return notifs.Query{}, err
+		}
+		if parsed.Host != host {
+			return notifs.Query{}, fmt.Errorf("repository host differs from --hostname")
+		}
+		queryText = "repo:" + parsed.Owner + "/" + parsed.Name + " " + queryText
+	}
+	if org != "" {
+		if strings.ContainsAny(org, " \t\n/:") {
+			return notifs.Query{}, fmt.Errorf("invalid organization name")
+		}
+		queryText = "org:" + org + " " + queryText
+	}
+	return notifs.ParseQuery(strings.TrimSpace(queryText))
 }
 
 func eachInput(input io.Reader, args []string, fn func(string) error) error {
