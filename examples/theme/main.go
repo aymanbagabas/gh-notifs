@@ -12,14 +12,26 @@ import (
 
 const sample = `# Notification preview
 
+**Author:** @octocat · **Review:** approved
+
+## Review summary
+
 Review **Fix slow uploads** in [acme/app](https://github.com/acme/app).
+Keep the change *small and focused*. Use ` + "`context.Context`" + ` for cancellation.
 
 > This change keeps uploads responsive on slow connections.
+
+### Before merge
 
 - [x] Add request cancellation
 - [ ] Confirm the timeout behavior
 
-` + "```go\nfunc upload(ctx context.Context) error {\n    return send(ctx)\n}\n```\n"
+| Check | Result |
+| --- | --- |
+| Tests | Passed |
+| Lint | Passed |
+
+` + "```go\n// Keep cancellation explicit.\nfunc upload(ctx context.Context) error {\n    const attempts = 3\n    log.Print(\"upload started\")\n    return send(ctx)\n}\n```\n"
 
 func main() {
 	light := flag.Bool("light", false, "show the light theme")

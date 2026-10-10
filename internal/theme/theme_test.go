@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -44,6 +45,25 @@ func TestRemoteControlsAreNotExecuted(t *testing.T) {
 	}
 	if strings.Contains(out, "\x1b]52") || strings.Contains(out, "\x1b[2J") {
 		t.Fatal("untrusted terminal controls survived Markdown rendering")
+	}
+}
+
+func TestSyntaxColorsFollowThemeChanges(t *testing.T) {
+	tokenStyle := regexp.MustCompile(`\x1b\[([0-9;]+)mreturn`)
+	var colors []string
+	for _, light := range []bool{false, true, false} {
+		out, err := Render("```go\nreturn \"hello\"\n```\n", "", 60, light, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		match := tokenStyle.FindStringSubmatch(out)
+		if len(match) != 2 {
+			t.Fatal("code keyword has no syntax color")
+		}
+		colors = append(colors, match[1])
+	}
+	if colors[0] == colors[1] || colors[0] != colors[2] {
+		t.Fatalf("syntax colors did not follow dark/light/dark changes: %v", colors)
 	}
 }
 
