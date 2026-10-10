@@ -47,13 +47,13 @@ func main() {
 		fmt.Printf("Notification %s (%s, %s, unread=%t): match=%t\n",
 			item.ID, item.Repository, item.Type, item.Unread, query.Match(item, ""))
 	}
-	for _, alias := range []string{"issue", "pr", "pull-request", "issue-or-pull-request"} {
-		query, err := notifs.ParseQuery("is:" + alias)
+	for _, filter := range []string{"issue", "pr", "pull-request", "issue-or-pull-request"} {
+		query, err := notifs.ParseQuery("is:" + filter)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		fmt.Printf("is:%s: issue=%t pull-request=%t release=%t\n", alias,
+		fmt.Printf("is:%s: issue=%t pull-request=%t release=%t\n", filter,
 			query.Match(notifs.Thread{Type: "Issue"}, ""),
 			query.Match(notifs.Thread{Type: "PullRequest"}, ""),
 			query.Match(notifs.Thread{Type: "Release"}, ""))

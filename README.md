@@ -142,16 +142,17 @@ gh-notifs -q 'repo:cli/cli repo:cli/go-gh is:issue-or-pull-request is:release'
 | --- | --- |
 | Repository or owner | `repo:cli/cli`, `org:acme` |
 | Read state | `is:read`, `is:unread` |
-| Type | `is:issue-or-pull-request`, `is:discussion`, `is:release`, `is:commit` |
+| Type | `is:issue`, `is:pr`, `is:pull-request`, `is:issue-or-pull-request`, `is:discussion`, `is:release`, `is:commit` |
 | Notification reason | `reason:mention`, `reason:participating`, `reason:review-requested`, `reason:subscribed` |
 | Author | `author:octocat`, `author:@me` |
 | Issue or pull request state | `state:open`, `state:closed`, `state:merged`, `state:draft` |
 | Update time | `since:2026-10-01`, `before:2026-11-01` |
 | Title text | `"slow uploads"` |
 
-Like the website, `is:issue`, `is:pr`, and `is:pull-request` each select **both issues and pull requests**.
-All three are aliases for `is:issue-or-pull-request`; they do not separate the two types.
-See GitHub's [custom filter limitations](https://docs.github.com/en/subscriptions-and-notifications/reference/inbox-filters#custom-filter-limitations).
+Use `is:issue-or-pull-request` for both issues and pull requests.
+`is:issue` selects only issues. `is:pr` and `is:pull-request` select only pull requests.
+For example, `is:pr is:unread` selects unread pull requests, while `is:issue is:pr is:unread` selects both unread types.
+These filters act locally and intentionally differ from the website's [combined type behavior](https://docs.github.com/en/subscriptions-and-notifications/reference/inbox-filters#custom-filter-limitations).
 Author and state filters apply to issues and pull requests.
 `reason:participating` uses the REST parameter `participating=true`; it is not a notification reason value.
 Requests also use this optimization when every reason alternative is `author`, `comment`, `mention`, or `participating`.

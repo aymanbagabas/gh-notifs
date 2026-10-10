@@ -299,7 +299,7 @@ func TestConcurrentRepositoriesMergeAndCache(t *testing.T) {
 			fmt.Fprintf(w, "[%s,%s,%s]", item("new1", "Issue", "2026-10-10"), item("new1", "Issue", "2026-10-10"), item("new2", "PullRequest", "2026-10-09"))
 		}
 	})
-	q, err := ParseQuery("repo:acme/app repo:acme/other repo:ACME/APP is:pr is:issue is:unread")
+	q, err := ParseQuery("repo:acme/app repo:acme/other repo:ACME/APP is:issue-or-pull-request is:discussion is:unread")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,6 +421,44 @@ func TestConcurrentRequestFailureCancelsOthers(t *testing.T) {
 	}
 }
 
+func TestDistinctTypeFiltersAndCache(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "[%s,%s,%s]", threadJSON("1", "Issue", "mention"),
+			threadJSON("2", "PullRequest", "mention"), threadJSON("3", "Release", "subscribed"))
+	})
+	for _, tc := range []struct {
+		query string
+		ids   []string
+	}{
+		{"is:issue", []string{"1"}},
+		{"is:pr", []string{"2"}},
+		{"is:pull-request", []string{"2"}},
+		{"is:issue-or-pull-request", []string{"1", "2"}},
+		{"is:issue is:pr is:unread", []string{"1", "2"}},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			q, err := ParseQuery(tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := c.Fetch(context.Background(), q, 10, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, item := range result.Items {
+				ids = append(ids, item.ID)
+			}
+			if !slices.Equal(ids, tc.ids) || result.More {
+				t.Fatalf("type filter returned %v, want %v", ids, tc.ids)
+			}
+			if cached := c.Cached(q, 10); !reflect.DeepEqual(cached.Items, result.Items) {
+				t.Fatalf("cached type filter differs: %+v", cached)
+			}
+		})
+	}
+}
+
 func TestFetchAuthorStateAndReadAlternatives(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -443,7 +481,7 @@ func TestFetchAuthorStateAndReadAlternatives(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	q, err := ParseQuery("author:@ME author:someone state:open state:closed is:issue is:pr is:read is:unread")
+	q, err := ParseQuery("author:@ME author:someone state:open state:closed is:issue-or-pull-request is:read is:unread")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +521,7 @@ func TestParticipationFetchAndCache(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			participating, err := ParseQuery(scope + "reason:mention is:unread is:pr")
+			participating, err := ParseQuery(scope + "reason:mention is:unread is:issue-or-pull-request")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -541,7 +579,7 @@ func TestRepositoryHistoryIncludesFilteredOutNotifications(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "[%s]", threadJSON("1", "Release", "subscribed"))
 	})
-	q, err := ParseQuery("is:pr")
+	q, err := ParseQuery("is:issue-or-pull-request")
 	if err != nil {
 		t.Fatal(err)
 	}

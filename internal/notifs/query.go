@@ -40,9 +40,9 @@ func ParseQuery(input string) (Query, error) {
 			}
 		case "org", "author", "text", "reason":
 		case "is":
-			value = queryType(value)
+			value = TypeName(value)
 			switch value {
-			case "read", "unread", "issue-or-pull-request",
+			case "read", "unread", "issue", "pull-request", "issue-or-pull-request",
 				"discussion", "release", "commit", "check-suite", "repository-invitation",
 				"repository-vulnerability-alert", "repository-advisory", "gist":
 			case "saved", "done":
@@ -212,16 +212,8 @@ func (q Query) Requests() []Query {
 	return requests
 }
 
-func queryType(value string) string {
-	value = TypeName(value)
-	if value == "issue" || value == "pull-request" {
-		return "issue-or-pull-request"
-	}
-	return value
-}
-
 func matchesType(filter, kind string) bool {
-	filter, kind = queryType(filter), TypeName(kind)
+	filter, kind = TypeName(filter), TypeName(kind)
 	if filter == "issue-or-pull-request" {
 		return kind == "issue" || kind == "pull-request"
 	}

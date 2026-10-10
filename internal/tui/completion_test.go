@@ -36,10 +36,18 @@ func TestEveryCompletionHasDescription(t *testing.T) {
 	}
 }
 
-func TestTypeAliasCompletionDescriptions(t *testing.T) {
-	for _, value := range []string{"is:issue", "is:pr", "is:pull-request"} {
-		if got := completionDescription(value); got != "Issues and pull requests (alias)" {
-			t.Fatalf("%s describes a separate type: %q", value, got)
+func TestTypeCompletionDescriptions(t *testing.T) {
+	a := testApp()
+	a.edit, a.input, a.caret = true, []rune("is:"), 3
+	values, _, _ := a.suggestions()
+	for value, description := range map[string]string{
+		"is:issue":                 "Issues only",
+		"is:pr":                    "Pull requests only",
+		"is:pull-request":          "Pull requests only",
+		"is:issue-or-pull-request": "Issues and pull requests",
+	} {
+		if !slices.Contains(values, value) || completionDescription(value) != description {
+			t.Fatalf("missing or incorrect type completion: %s", value)
 		}
 	}
 }

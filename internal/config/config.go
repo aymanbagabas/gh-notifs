@@ -22,7 +22,8 @@ const DefaultText = `# gh-notifs configuration
 # repo, org, reason, is, author, state, since, before, and quoted title text.
 # Repeated filter values are alternatives. Each filter group must match.
 # Type and read status are separate groups.
-# is:issue, is:pr, and is:pull-request all mean is:issue-or-pull-request.
+# Use is:issue-or-pull-request for both issues and pull requests.
+# is:issue selects only issues; is:pr and is:pull-request select only pull requests.
 # Every title term and date bound must match. AND and OR are title words.
 # Dates use YYYY-MM-DD or RFC3339. Repeated dates use the strictest bounds.
 # Use scopes: [] to show only the repository history.

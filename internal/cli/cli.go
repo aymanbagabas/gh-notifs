@@ -26,13 +26,15 @@ Query fields:
   repo:OWNER/REPO org:ORG reason:review-requested is:read is:unread
   reason:participating
   is:issue-or-pull-request is:discussion is:release is:commit is:check-suite
+  is:issue is:pr is:pull-request
   author:LOGIN author:@me state:open state:closed state:merged state:draft
   since:YYYY-MM-DD before:YYYY-MM-DD "title text"
 Dates use notification update times. RFC3339 timestamps also work.
 Author and state filters currently apply to issues and pull requests.
 Unsupported fields and website-only states produce an error.
-Like the website, is:issue, is:pr, and is:pull-request each select both
-issues and pull requests. They are aliases for is:issue-or-pull-request.
+Use is:issue-or-pull-request for both issues and pull requests.
+Use is:issue for issues only, or is:pr/is:pull-request for pull requests only.
+These specific type filters differ from the website's combined behavior.
 Repeated values in each filter group are alternatives.
 Type and read status are separate groups; every group must match.
 Every title term and date bound must match. AND and OR are title words,

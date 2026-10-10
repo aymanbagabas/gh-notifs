@@ -16,21 +16,22 @@ func TestQuery(t *testing.T) {
 		want  bool
 	}{
 		{"", true},
-		{`org:acme repo:acme/app is:pr is:unread reason:review-requested "slow uploads"`, true},
+		{`org:acme repo:acme/app is:issue-or-pull-request is:unread reason:review-requested "slow uploads"`, true},
 		{"author:@me state:open since:2026-10-08 before:2026-10-10", true},
 		{"is:read", false},
-		{"reason:participating is:unread is:pr", false},
+		{"reason:participating is:unread is:issue-or-pull-request", false},
 		{"reason:participating is:read", false},
-		{"reason:participating is:issue", false},
-		{"is:issue", true},
+		{"reason:participating is:issue-or-pull-request", false},
+		{"is:issue-or-pull-request", true},
+		{"is:issue", false},
 		{"is:pr", true},
 		{"is:pull-request", true},
 		{"repo:acme/other", false},
 		{"org:other", false},
 		{"before:2026-10-09", false},
 		{"reason:mention", false},
-		{"is:PullRequest reason:REVIEW_REQUESTED", true},
-		{`is:pull_request reason:"review requested"`, true},
+		{"is:ISSUE-OR-PULL-REQUEST reason:REVIEW_REQUESTED", true},
+		{`is:issue_or_pull_request reason:"review requested"`, true},
 		{"repo:acme/other repo:ACME/APP", true},
 		{"org:other org:ACME repo:acme/app", true},
 		{"repo:acme/other repo:acme/app org:other", false},
@@ -38,12 +39,13 @@ func TestQuery(t *testing.T) {
 		{"reason:mention reason:review_requested", true},
 		{"reason:participating reason:review-requested", true},
 		{"reason:participating reason:subscribed", false},
+		{"is:release is:issue-or-pull-request is:unread", true},
+		{"is:issue-or-pull-request is:release is:read", false},
 		{"is:issue is:pr is:unread", true},
-		{"is:pr is:issue is:read", false},
+		{"is:issue is:pr is:read", false},
 		{"is:read is:unread", true},
 		{"is:unread is:read", true},
-		{"is:issue is:issue-or-pull-request", true},
-		{"is:pr is:pull_request is:PullRequest", true},
+		{"is:issue-or-pull-request is:issue_or_pull_request", true},
 		{"slow uploads", true},
 		{"slow missing", false},
 		{"slow OR uploads", false},
@@ -65,18 +67,28 @@ func TestQuery(t *testing.T) {
 	}
 }
 
-func TestWebsiteIssueAliases(t *testing.T) {
-	for _, alias := range []string{"issue", "pr", "pull-request", "pull_request", "PullRequest", "issue-or-pull-request"} {
-		q, err := ParseQuery("is:" + alias)
+func TestNotificationTypeFilters(t *testing.T) {
+	for _, tc := range []struct {
+		filter string
+		types  []string
+	}{
+		{"is:issue", []string{"Issue"}},
+		{"is:ISSUE", []string{"Issue"}},
+		{"is:pr", []string{"PullRequest"}},
+		{"is:PR", []string{"PullRequest"}},
+		{"is:pull-request", []string{"PullRequest"}},
+		{"is:pull_request", []string{"PullRequest"}},
+		{"is:PullRequest", []string{"PullRequest"}},
+		{"is:issue-or-pull-request", []string{"Issue", "PullRequest"}},
+		{"is:issue is:pr", []string{"Issue", "PullRequest"}},
+	} {
+		q, err := ParseQuery(tc.filter)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if q.Terms[0].Value != "issue-or-pull-request" {
-			t.Fatalf("%s did not normalize to the website's combined type", alias)
-		}
 		for _, kind := range []string{"Issue", "PullRequest", "Release"} {
-			if got, want := q.Match(Thread{Type: kind}, ""), kind != "Release"; got != want {
-				t.Errorf("is:%s with %s: got %t, want %t", alias, kind, got, want)
+			if got, want := q.Match(Thread{Type: kind}, ""), slices.Contains(tc.types, kind); got != want {
+				t.Errorf("%s with %s: got %t, want %t", tc.filter, kind, got, want)
 			}
 		}
 	}
@@ -94,7 +106,7 @@ func TestParticipationRequiresRequestMembership(t *testing.T) {
 }
 
 func TestRequestAlternativesAndImmutability(t *testing.T) {
-	q, err := ParseQuery("repo:ACME/app repo:acme/other repo:acme/APP reason:participating reason:subscribed is:pr is:unread")
+	q, err := ParseQuery("repo:ACME/app repo:acme/other repo:acme/APP reason:participating reason:subscribed is:issue-or-pull-request is:unread")
 	if err != nil {
 		t.Fatal(err)
 	}
