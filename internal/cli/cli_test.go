@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,16 +14,8 @@ import (
 
 func runCommand(t *testing.T, input string, args ...string) (string, string, error) {
 	t.Helper()
-	cmd, err := newCommand("test")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var out, stderr bytes.Buffer
-	cmd.SetIn(strings.NewReader(input))
-	cmd.SetOut(&out)
-	cmd.SetErr(&stderr)
-	cmd.SetArgs(args)
-	err = cmd.ExecuteContext(context.Background())
+	err := run(context.Background(), args, "test", strings.NewReader(input), &out, &stderr)
 	return out.String(), stderr.String(), err
 }
 
@@ -92,7 +85,7 @@ func TestFlagAliases(t *testing.T) {
 			{"query equals", []string{"-q=unknown:value"}, `unsupported query field "unknown"`},
 			{"short query last", []string{"--query", "is:unread", "-q", "unknown:value"}, `unsupported query field "unknown"`},
 			{"long query last", []string{"-q", "unknown:value", "--query", "state:invalid"}, `unsupported state "invalid"`},
-			{"removed limit n", []string{"-n", "10"}, "unknown shorthand flag: 'n'"},
+			{"removed limit n", []string{"-n", "10"}, "flag provided but not defined: -n"},
 			{"limit L", []string{"-L", "0"}, "--limit and --page must be positive"},
 			{"limit equals", []string{"-L=0"}, "--limit and --page must be positive"},
 			{"short limit last", []string{"--limit", "0", "-L", "10", "-q", "unknown:value"}, `unsupported query field "unknown"`},
@@ -131,14 +124,16 @@ func TestCommandValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"unknown"}, "unknown command"},
-		{[]string{"list", "extra"}, "unknown command"},
+		{[]string{"list", "extra"}, "unexpected argument"},
 		{[]string{"--page", "2"}, "--page requires the list command"},
 		{[]string{"--repo", "cli/cli", "--org", "cli"}, "mutually exclusive"},
 		{[]string{"--hostname", "https://github.com"}, "invalid GitHub hostname"},
 		{[]string{"-R", "example.com/cli/cli", "--hostname", "github.com"}, "repository host differs"},
 		{[]string{"--query", "state:invalid", "list"}, "unsupported state"},
-		{[]string{"-L0"}, "--limit and --page must be positive"},
-		{[]string{"--interval", "1m"}, "unknown flag"},
+		{[]string{"-L0"}, "flag provided but not defined: -L0"},
+		{[]string{"--interval", "1m"}, "flag provided but not defined: -interval"},
+		{[]string{"completion", "bash"}, "unknown command"},
+		{[]string{"__complete", "list"}, "unknown command"},
 		{[]string{"open", "http://example.com"}, "invalid browser URL"},
 	} {
 		out, stderr, err := runCommand(t, "", tt.args...)
@@ -154,7 +149,7 @@ func TestHelpAndVersionNeedNoAuthentication(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_ENTERPRISE_TOKEN", "")
 	t.Setenv("GITHUB_ENTERPRISE_TOKEN", "")
-	for _, command := range []string{"", "list", "open", "read", "done", "subscribe", "unsubscribe", "completion"} {
+	for _, command := range []string{"", "list", "open", "read", "done", "subscribe", "unsubscribe"} {
 		for _, flag := range []string{"--help", "--version"} {
 			args := []string{flag}
 			if command != "" {
@@ -172,6 +167,39 @@ func TestHelpAndVersionNeedNoAuthentication(t *testing.T) {
 	out, _, err := runCommand(t, "", "help", "list")
 	if err != nil || !strings.Contains(out, "gh-notifs list") {
 		t.Fatalf("subcommand help: %q, %v", out, err)
+	}
+}
+
+func TestFlagParsingBoundaries(t *testing.T) {
+	for _, tt := range []struct {
+		name, command string
+		args, rest    []string
+		limit         int
+		query         string
+	}{
+		{"defaults", "", nil, nil, 50, ""},
+		{"before command", "list", []string{"-L", "10", "list"}, nil, 10, ""},
+		{"after command", "list", []string{"list", "-L=10"}, nil, 10, ""},
+		{"both sides", "list", []string{"--limit", "5", "list", "-L", "10"}, nil, 10, ""},
+		{"reverse aliases", "list", []string{"-L", "5", "list", "--limit", "10"}, nil, 10, ""},
+		{"command as value", "list", []string{"-q", "read", "list"}, nil, 50, "read"},
+		{"separator as value", "list", []string{"-q", "--", "list", "-L", "10"}, nil, 10, "--"},
+		{"flags before IDs", "read", []string{"read", "-L", "10", "123", "456"}, []string{"123", "456"}, 10, ""},
+		{"stop at ID", "read", []string{"read", "123", "--version"}, []string{"123", "--version"}, 50, ""},
+		{"explicit separator", "read", []string{"read", "--", "--version"}, []string{"--version"}, 50, ""},
+		{"empty value", "list", []string{"-q", "old", "list", "--query="}, nil, 50, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			original := slices.Clone(tt.args)
+			opts, command, rest, err := parseArgs(tt.args)
+			if err != nil || command != tt.command || !slices.Equal(rest, tt.rest) ||
+				opts.limit != tt.limit || opts.queryText != tt.query || opts.version {
+				t.Fatalf("parseArgs(%q) = %+v, %q, %q, %v", tt.args, opts, command, rest, err)
+			}
+			if !slices.Equal(tt.args, original) {
+				t.Fatal("parser mutated caller arguments")
+			}
+		})
 	}
 }
 

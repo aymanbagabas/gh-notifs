@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +16,6 @@ import (
 	"github.com/cli/go-gh/v2/pkg/browser"
 	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/cli/go-gh/v2/pkg/term"
-	"github.com/spf13/cobra"
 )
 
 const description = `With terminal input and output, start the notification inbox.
@@ -50,29 +50,94 @@ terminal controls inside values become spaces.`
 type options struct {
 	queryText, repo, org, host, configPath string
 	global, header, noColor                bool
+	help, version                          bool
 	limit, page                            int
 }
 
 func Run(ctx context.Context, args []string, version string) error {
-	root, err := newCommand(version)
+	return run(ctx, args, version, os.Stdin, os.Stdout, os.Stderr)
+}
+
+func run(ctx context.Context, args []string, version string, input io.Reader, output, stderr io.Writer) error {
+	opts, command, args, err := parseArgs(args)
 	if err != nil {
 		return err
 	}
-	root.SetArgs(args)
-	root.SetIn(os.Stdin)
-	root.SetOut(os.Stdout)
-	root.SetErr(os.Stderr)
-	return root.ExecuteContext(ctx)
+	switch command {
+	case "", "list", "open", "read", "done", "subscribe", "unsubscribe":
+	default:
+		return fmt.Errorf("unknown command %q; use --help", command)
+	}
+	if opts.help {
+		return writeHelp(output, command)
+	}
+	if opts.version {
+		_, err := fmt.Fprintln(output, version)
+		return err
+	}
+	if (command == "" || command == "list") && len(args) > 0 {
+		return fmt.Errorf("unexpected argument %q; use --help", args[0])
+	}
+	return opts.run(ctx, command, args, input, output, stderr)
 }
 
-func newCommand(version string) (*cobra.Command, error) {
+func parseArgs(args []string) (options, string, []string, error) {
 	var opts options
-	root := &cobra.Command{
-		Use: "gh-notifs", Short: "A GitHub notification inbox for the terminal",
-		Long: description, Version: version,
-		SilenceUsage: true, SilenceErrors: true,
-		Args: cobra.NoArgs, ValidArgsFunction: cobra.NoFileCompletions,
-		Example: `  gh-notifs
+	flags := flag.NewFlagSet("gh-notifs", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&opts.queryText, "query", "", "notification query")
+	flags.StringVar(&opts.queryText, "q", "", "notification query")
+	flags.StringVar(&opts.repo, "repo", "", "repository scope")
+	flags.StringVar(&opts.repo, "R", "", "repository scope")
+	flags.StringVar(&opts.org, "org", "", "organization scope")
+	flags.StringVar(&opts.host, "hostname", "", "GitHub host")
+	flags.StringVar(&opts.configPath, "config", "", "scope configuration file")
+	flags.BoolVar(&opts.global, "global", false, "all repositories")
+	flags.BoolVar(&opts.header, "header", false, "TSV header")
+	flags.BoolVar(&opts.noColor, "no-color", false, "disable colors")
+	flags.BoolVar(&opts.help, "help", false, "show help")
+	flags.BoolVar(&opts.help, "h", false, "show help")
+	flags.BoolVar(&opts.version, "version", false, "show version")
+	flags.IntVar(&opts.limit, "limit", 50, "result limit")
+	flags.IntVar(&opts.limit, "L", 50, "result limit")
+	flags.IntVar(&opts.page, "page", 1, "result page")
+	if err := flags.Parse(args); err != nil {
+		return opts, "", nil, err
+	}
+	command := ""
+	args = flags.Args()
+	if len(args) > 0 {
+		command, args = args[0], args[1:]
+		if command == "help" {
+			opts.help, command = true, ""
+			if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+				command, args = args[0], args[1:]
+			}
+		}
+		if err := flags.Parse(args); err != nil {
+			return opts, command, nil, err
+		}
+		args = flags.Args()
+	}
+	return opts, command, args, nil
+}
+
+const flagHelp = `  -q, --query TEXT       Filter notifications; repeated values are alternatives
+  -R, --repo OWNER/REPO  Add [HOST/]OWNER/REPO to repository alternatives
+      --org ORG          Add an organization to owner alternatives
+      --global           Ignore the current repository
+      --hostname HOST    GitHub host; defaults to the gh configuration
+  -L, --limit N          Results per page (default 50)
+      --page N           List result page (default 1; list only)
+      --config PATH      Scope configuration file (interactive inbox only)
+      --no-color         Disable TUI color
+      --header           Include column names in TSV
+      --version          Print version
+  -h, --help             Show help`
+
+func writeHelp(output io.Writer, command string) error {
+	use, long := "[command] [flags]", description
+	example := `  gh-notifs
   gh-notifs --global -q 'reason:review-requested'
   gh-notifs list -R cli/cli -q 'is:unread' -L 10
   gh-notifs list -R cli/cli -q 'repo:cli/go-gh reason:mention reason:comment'
@@ -81,32 +146,7 @@ func newCommand(version string) (*cobra.Command, error) {
   gh-notifs read 123456789
   gh-notifs done 123456789
   gh-notifs subscribe 123456789
-  gh-notifs unsubscribe 123456789`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return opts.run(cmd, "", args)
-		},
-	}
-	root.SetVersionTemplate("{{.Root.Version}}\n")
-	flags := root.PersistentFlags()
-	flags.StringVarP(&opts.queryText, "query", "q", "", "Filter notifications with a `query`; repeated values are alternatives")
-	flags.StringVarP(&opts.repo, "repo", "R", "", "Add `[HOST/]OWNER/REPO` to the query's repository alternatives")
-	flags.StringVar(&opts.org, "org", "", "Add an `organization` to the query's owner alternatives")
-	flags.StringVar(&opts.host, "hostname", "", "GitHub `host`; defaults to the gh configuration")
-	flags.StringVar(&opts.configPath, "config", "", "Scope configuration `file` (interactive inbox only)")
-	flags.BoolVar(&opts.global, "global", false, "Ignore the current repository")
-	flags.BoolVar(&opts.header, "header", false, "Include column names in TSV")
-	flags.BoolVar(&opts.noColor, "no-color", false, "Disable TUI color")
-	flags.Bool("version", false, "Print version")
-	flags.IntVarP(&opts.limit, "limit", "L", 50, "Results per page")
-	flags.IntVar(&opts.page, "page", 1, "List result page (list only)")
-	if err := root.MarkPersistentFlagFilename("config"); err != nil {
-		return nil, err
-	}
-	for _, name := range []string{"query", "repo", "org", "hostname", "limit", "page"} {
-		if err := root.RegisterFlagCompletionFunc(name, cobra.NoFileCompletions); err != nil {
-			return nil, err
-		}
-	}
+  gh-notifs unsubscribe 123456789`
 	for _, spec := range []struct{ name, use, short, long, example string }{
 		{"list", "list", "Fetch notifications once and print TSV", description,
 			"  gh-notifs list -R cli/cli -q 'is:unread' -L 10\n  gh-notifs list --global --header\n  gh-notifs list --page 2 -L 20"},
@@ -121,49 +161,29 @@ func newCommand(version string) (*cobra.Command, error) {
 		{"unsubscribe", "unsubscribe [THREAD_ID ...]", "Unsubscribe from notifications", "Accept thread IDs as arguments, or TSV rows/IDs on stdin.",
 			"  gh-notifs unsubscribe 123456789\n  printf '%s\\n' 123456789 987654321 | gh-notifs unsubscribe\n  gh-notifs unsubscribe < selected.tsv"},
 	} {
-		cmd := &cobra.Command{
-			Use: spec.use, Short: spec.short, Long: spec.long, Example: spec.example, Version: version,
-			ValidArgsFunction: cobra.NoFileCompletions,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return opts.run(cmd, spec.name, args)
-			},
-		}
-		if spec.name == "list" {
-			cmd.Args = cobra.NoArgs
-		} else {
-			cmd.Long += "\nUse headerless output from list for TSV input; do not include --header."
-			if spec.name != "open" {
-				cmd.Long += "\nThese actions modify GitHub immediately without confirmation.\nUse notification thread IDs from list, not issue or pull request numbers."
+		if command == "" {
+			if spec.name == "list" {
+				long += "\n\nCommands:"
 			}
+			long += fmt.Sprintf("\n  %-12s %s", spec.name, spec.short)
+		} else if spec.name == command {
+			use, long, example = spec.use, spec.long, spec.example
 		}
-		root.AddCommand(cmd)
 	}
-	root.AddCommand(&cobra.Command{
-		Use: "completion <shell>", Short: "Generate shell completions for standalone gh-notifs",
-		Long:    "Generate a shell completion script for standalone gh-notifs.\nThis does not configure completion for the gh notifs extension command.",
-		Version: version, Args: cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
-		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
-		Example:   "  gh-notifs completion zsh > _gh-notifs",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			switch args[0] {
-			case "bash":
-				return root.GenBashCompletionV2(cmd.OutOrStdout(), true)
-			case "zsh":
-				return root.GenZshCompletion(cmd.OutOrStdout())
-			case "fish":
-				return root.GenFishCompletion(cmd.OutOrStdout(), true)
-			case "powershell":
-				return root.GenPowerShellCompletionWithDesc(cmd.OutOrStdout())
-			default:
-				return fmt.Errorf("unsupported completion shell %q", args[0])
-			}
-		},
-	})
-	return root, nil
+	if command != "" && command != "list" {
+		long += "\nUse headerless output from list for TSV input; do not include --header."
+		if command != "open" {
+			long += "\nThese actions modify GitHub immediately without confirmation.\nUse notification thread IDs from list, not issue or pull request numbers."
+		}
+	}
+	_, err := fmt.Fprintf(output, "Usage: gh-notifs %s\n\n%s\n\nFlags:\n%s\n\n"+
+		"Flags can precede or follow the command, but must precede IDs or URLs.\n"+
+		"Use -L 10 or -L=10, not -L10. After the command, -- ends flag parsing.\n\nExamples:\n%s\n",
+		use, long, flagHelp, example)
+	return err
 }
 
-func (opts options) run(cmd *cobra.Command, command string, args []string) error {
-	ctx := cmd.Context()
+func (opts options) run(ctx context.Context, command string, args []string, input io.Reader, output, stderr io.Writer) error {
 	host, configPath := opts.host, opts.configPath
 	header, noColor, limit, page := opts.header, opts.noColor, opts.limit, opts.page
 	if limit < 1 || page < 1 || limit > int(^uint(0)>>1)/page {
@@ -179,8 +199,8 @@ func (opts options) run(cmd *cobra.Command, command string, args []string) error
 		return fmt.Errorf("invalid GitHub hostname")
 	}
 	if command == "open" {
-		b := browser.New("", cmd.OutOrStdout(), cmd.ErrOrStderr())
-		return eachInput(cmd.InOrStdin(), args, func(line string) error {
+		b := browser.New("", output, stderr)
+		return eachInput(input, args, func(line string) error {
 			fields := strings.Split(line, "\t")
 			return tui.OpenBrowser(b, fields[len(fields)-1])
 		})
@@ -190,7 +210,7 @@ func (opts options) run(cmd *cobra.Command, command string, args []string) error
 		if err != nil {
 			return err
 		}
-		return eachInput(cmd.InOrStdin(), args, func(line string) error {
+		return eachInput(input, args, func(line string) error {
 			id, _, _ := strings.Cut(line, "\t")
 			return client.Action(ctx, id, command)
 		})
@@ -203,9 +223,9 @@ func (opts options) run(cmd *cobra.Command, command string, args []string) error
 	if err != nil {
 		return err
 	}
-	input, inputIsFile := cmd.InOrStdin().(*os.File)
-	output, outputIsFile := cmd.OutOrStdout().(*os.File)
-	if command == "" && inputIsFile && outputIsFile && term.IsTerminal(input) && term.IsTerminal(output) {
+	inputFile, inputIsFile := input.(*os.File)
+	outputFile, outputIsFile := output.(*os.File)
+	if command == "" && inputIsFile && outputIsFile && term.IsTerminal(inputFile) && term.IsTerminal(outputFile) {
 		if configPath == "" {
 			configPath, err = config.Path()
 			if err != nil {
@@ -229,11 +249,11 @@ func (opts options) run(cmd *cobra.Command, command string, args []string) error
 		return err
 	}
 	if header {
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), Columns); err != nil {
+		if _, err := fmt.Fprintln(output, Columns); err != nil {
 			return err
 		}
 	}
-	return WriteTSV(cmd.OutOrStdout(), items)
+	return WriteTSV(output, items)
 }
 
 func (opts options) scopedQuery(host string) (notifs.Query, error) {

@@ -57,6 +57,21 @@ Run `gh-notifs` to open the inbox.
 The examples below use `gh-notifs`; `gh notifs` accepts the same arguments.
 Both forms use GitHub CLI credentials, including supported environment variables such as `GH_TOKEN` and `GH_HOST`.
 
+Use `gh-notifs --help` for all flags, or `gh-notifs help read` for a command's examples.
+Flags can precede or follow the command, but must precede positional IDs or URLs:
+
+```sh
+gh-notifs -R cli/cli list -L 10 --header
+gh-notifs list -R cli/cli -L=10 --header
+gh-notifs read --hostname github.com 123456789
+```
+
+Separate flag names and values with a space or `=`.
+Use `-L 10` or `-L=10`, not `-L10`.
+After the command, `--` ends flag parsing.
+Shell completion scripts are not provided.
+The inbox's query editor has built-in completions.
+
 ## Browse your inbox
 
 ```sh
@@ -290,21 +305,6 @@ The history uses a separate `repositories-v1.json` file beside the notification 
 It can contain private repository names.
 It requires no extra API requests and includes only repositories the app has fetched.
 It does not show unread counts or remove repositories when their notifications disappear.
-
-## Shell completions
-
-Generate a completion script for your shell:
-
-```sh
-gh-notifs completion bash > gh-notifs.bash
-gh-notifs completion zsh > _gh-notifs
-gh-notifs completion fish > gh-notifs.fish
-gh-notifs completion powershell > gh-notifs.ps1
-```
-
-Load the script through your shell's completion configuration.
-Bash requires `bash-completion`.
-The scripts complete commands, flags, and configuration paths for `gh-notifs`, not the `gh notifs` extension form.
 
 ## API limits
 
