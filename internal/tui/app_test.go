@@ -24,6 +24,32 @@ func testApp() *app {
 		}, CheckedAt: time.Now()}, generation: 1}
 }
 
+func TestWindowTitleTracksCurrentView(t *testing.T) {
+	a := testApp()
+	if got := a.windowTitle(); got != "gh-notifs - 1 unread" {
+		t.Fatalf("initial title: %q", got)
+	}
+	a.result.Items = append(a.result.Items, notifs.Thread{ID: "3", Unread: true})
+	a.page, a.cursor = 1, 2
+	a.selected["2"] = true
+	if got := a.windowTitle(); got != "gh-notifs - 2 unread" {
+		t.Fatalf("title counted only the current page or checked items: %q", got)
+	}
+	a.result.More = true
+	if got := a.windowTitle(); got != "gh-notifs - 2+ unread" {
+		t.Fatalf("partial view did not mark the count as incomplete: %q", got)
+	}
+	result := notifs.Result{Items: []notifs.Thread{{ID: "3"}}}
+	a.receive(context.Background(), message{generation: a.generation, result: &result, final: true})
+	if got := a.windowTitle(); got != "gh-notifs - 0 unread" {
+		t.Fatalf("refresh did not update the unread count: %q", got)
+	}
+	a.result = notifs.Result{}
+	if got := a.windowTitle(); got != "gh-notifs - 0 unread" {
+		t.Fatalf("empty view title: %q", got)
+	}
+}
+
 func TestRenderAndInput(t *testing.T) {
 	a := testApp()
 	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 32})

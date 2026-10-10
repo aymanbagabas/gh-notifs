@@ -72,6 +72,7 @@ func helpRows(sc *screen.Screen, width int) [][]helpPart {
 		}},
 		{"Search", []helpBinding{
 			{"/ or s", "Edit query", "/"},
+			{"Ctrl+Space", "Show completions", ""},
 			{"Enter / Esc", "Apply / cancel", ""},
 			{"Up / Down", "Select suggestion", ""},
 			{"Tab / click", "Insert suggestion", ""},

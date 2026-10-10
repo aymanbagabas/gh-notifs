@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -58,6 +59,7 @@ type app struct {
 	caret             int
 	cutBuffer         string
 	showCursor        bool
+	title             string
 	paste             strings.Builder
 	pasting           bool
 	light             bool
@@ -113,12 +115,17 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if value := recover(); value != nil {
+			err = errors.Join(err, fmt.Errorf("inbox panic: %v\n%s", value, debug.Stack()))
+		}
+		err = errors.Join(err, p.Finish())
+	}()
 	programOptions := program.DefaultOptions()
 	programOptions.QueryBackgroundColor = !options.NoColor
 	if err := p.InitWith(programOptions); err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, p.Finish()) }()
 	if err := p.EnterAltScreen(); err != nil {
 		return err
 	}
@@ -439,6 +446,7 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 	case key.MatchesAny("/", "s"):
 		a.edit, a.input = true, []rune(a.query.Raw)
 		a.caret = len(a.input)
+		a.completionKey = ""
 	case key.Matches("i"):
 		a.apply(ctx, a.options.Query.Raw)
 	case key.Matches("tab"):
@@ -615,16 +623,20 @@ func (a *app) handlePaste(ev event.Event) {
 
 func (a *app) editKey(ctx context.Context, key event.Key) bool {
 	suggestions, start, end := a.suggestions()
+	if key.MatchesAny("ctrl+space", "ctrl+@") {
+		a.completionIndex = 0
+		return false
+	}
 	if len(suggestions) > 0 {
 		switch {
 		case key.Matches("down"):
 			a.completionIndex = (a.completionIndex + 1) % len(suggestions)
 			return false
 		case key.Matches("up"):
-			a.completionIndex = (a.completionIndex + len(suggestions) - 1) % len(suggestions)
+			a.completionIndex = (max(0, a.completionIndex) + len(suggestions) - 1) % len(suggestions)
 			return false
-		case key.MatchesAny("tab", "enter"):
-			a.complete(suggestions[a.completionIndex], start, end)
+		case key.Matches("tab") || (key.Matches("enter") && a.completionIndex >= 0):
+			a.complete(suggestions[max(0, a.completionIndex)], start, end)
 			return false
 		}
 	}

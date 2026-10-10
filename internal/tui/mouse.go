@@ -122,6 +122,7 @@ func (a *app) mouse(ctx context.Context, ev event.Event, sc *screen.Screen) bool
 			if !a.edit {
 				a.edit, a.input = true, []rune(a.query.Raw)
 				a.caret = len(a.input)
+				a.completionKey = ""
 			}
 			visible, _ := queryViewport(sc, a.input, a.caret, sc.Size().Width-10)
 			a.caret = len(a.input) - len([]rune(visible))

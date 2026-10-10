@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"altscreen.io/vision/ansi"
 	"altscreen.io/vision/layout"
 	"altscreen.io/vision/screen"
 	"altscreen.io/vision/style"
@@ -124,8 +123,7 @@ func (a *app) paintPreview(sc *screen.Screen, bounds layout.Rectangle) {
 	}
 	put := func(rect layout.Rectangle, value string, st style.Style) {
 		text.SetStringRect(sc, rect, strings.Repeat(" ", rect.Dx()), st)
-		value = ansi.TruncateMode(notifs.Plain(value), rect.Dx(), "…", sc.WidthMethod(), sc.AmbiguousWide())
-		text.SetStringRect(sc, rect, value, st)
+		text.SetStringRectTruncate(sc, rect, notifs.Plain(value), st, "…", st)
 	}
 	y := bounds.Min.Y
 	put(layout.Rect(bounds.Min.X, y, bounds.Dx(), 1), "", panel)

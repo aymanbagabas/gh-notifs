@@ -14,7 +14,7 @@ func (a *app) suggestions() ([]string, int, int) {
 	}
 	key := fmt.Sprintf("%d:%s", a.caret, string(a.input))
 	if key != a.completionKey {
-		a.completionKey, a.completionIndex = key, 0
+		a.completionKey, a.completionIndex = key, -1
 	}
 	start, end := 0, len(a.input)
 	var quote rune
@@ -46,8 +46,11 @@ func (a *app) suggestions() ([]string, int, int) {
 		}
 	}
 	prefix := strings.ToLower(string(a.input[start:a.caret]))
-	if prefix == "" {
+	if prefix == "" && strings.TrimSpace(string(a.input)) != "" && a.completionIndex < 0 {
 		return nil, start, end
+	}
+	if prefix != "" && a.completionIndex < 0 {
+		a.completionIndex = 0
 	}
 	field, value, hasField := strings.Cut(prefix, ":")
 	values := []string{"repo:", "org:", "reason:", "is:", "author:", "state:", "since:", "before:"}

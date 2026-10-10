@@ -13,6 +13,38 @@ import (
 	"altscreen.io/vision/text"
 )
 
+func TestHelpBarUsesSeparateKeysWithoutUnderlines(t *testing.T) {
+	for _, light := range []bool{false, true} {
+		for _, noColor := range []bool{false, true} {
+			a := testApp()
+			a.light, a.options.NoColor = light, noColor
+			sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 32})
+			a.paint(sc)
+			for _, control := range []struct{ action, label string }{
+				{"q", "q quit"}, {"x", "x select"}, {"v", "v preview"},
+				{"shift+i", "I read"}, {"shift+m", "M unsubscribe"}, {"shift+s", "S subscribe"},
+			} {
+				target := findHit(t, a, control.action)
+				if target.rect.Dx() != sc.StringWidth(control.label) {
+					t.Fatalf("help control has the wrong width: %q", control.label)
+				}
+				for offset, r := range control.label {
+					x := sc.StringWidth(control.label[:offset])
+					cell := sc.CellAt(layout.Pos(target.rect.Min.X+x, target.rect.Min.Y))
+					if cell.Content() != string(r) || cell.Style.GetUnderline() {
+						t.Fatalf("help control %q has an incorrect or underlined cell", control.label)
+					}
+				}
+				key := sc.CellAt(target.rect.Min).Style
+				description := sc.CellAt(target.rect.Min.Add(layout.Pos(2, 0))).Style
+				if !key.GetBold() || description.GetBold() {
+					t.Fatal("help keys and descriptions lack distinct styles")
+				}
+			}
+		}
+	}
+}
+
 func TestHelpExpandsFooterAndRestoresInbox(t *testing.T) {
 	a := testApp()
 	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 32})

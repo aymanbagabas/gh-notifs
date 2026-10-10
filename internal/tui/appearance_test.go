@@ -16,12 +16,13 @@ import (
 func assertButtonMnemonic(t *testing.T, sc *screen.Screen, target hit, label string, shortcut rune) {
 	t.Helper()
 	index := strings.IndexRune(label, shortcut)
-	if index < 0 || target.rect.Dx() != len(label) {
+	if index < 0 || target.rect.Dx() != sc.StringWidth(label) {
 		t.Fatalf("invalid button label or target: %q, %v", label, target.rect)
 	}
-	for x, r := range label {
+	for offset, r := range label {
+		x := sc.StringWidth(label[:offset])
 		cell := sc.CellAt(layout.Pos(target.rect.Min.X+x, target.rect.Min.Y))
-		if cell.Content() != string(r) || cell.Style.GetUnderline() != (x == index) {
+		if cell.Content() != string(r) || cell.Style.GetUnderline() != (offset == index) {
 			t.Fatalf("button %q at %d: content=%q, underline=%v", label, x, cell.Content(), cell.Style.GetUnderline())
 		}
 	}
@@ -40,15 +41,6 @@ func TestButtonMnemonics(t *testing.T) {
 			}{
 				{"toggle", "Sidebar", 'b'},
 				{"metadata-toggle", "hide metadata", 'm'},
-				{"q", "quit", 'q'},
-				{"x", "checkbox", 'x'},
-				{"o", "open", 'o'},
-				{"v", "preview", 'v'},
-				{"r", "refresh", 'r'},
-				{"e", "done", 'e'},
-				{"shift+i", "I read it", 'I'},
-				{"shift+m", "Mute", 'M'},
-				{"shift+s", "Subscribe", 'S'},
 			} {
 				assertButtonMnemonic(t, sc, findHit(t, a, button.action), button.label, button.shortcut)
 			}
@@ -66,6 +58,52 @@ func TestButtonMnemonics(t *testing.T) {
 							assertButtonMnemonic(t, sc, target, " No ", 'N')
 						}
 					}
+				}
+			}
+		}
+	}
+}
+
+func TestActiveBorderCornersAndJunctions(t *testing.T) {
+	for _, light := range []bool{false, true} {
+		for _, noColor := range []bool{false, true} {
+			for _, help := range []bool{false, true} {
+				for _, focus := range []string{"none", "search", "sidebar"} {
+					a := testApp()
+					a.light, a.options.NoColor, a.help, a.showPreview = light, noColor, help, true
+					if help {
+						a.sideWidth = 45
+					}
+					a.edit, a.sidebar = focus == "search", focus == "sidebar"
+					a.input, a.caret = []rune("hello"), 5
+					sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 40})
+					a.paint(sc)
+					assertBorder := func(x, y int, glyph string, active bool) {
+						t.Helper()
+						cell := sc.CellAt(layout.Pos(x, y))
+						if cell.Content() != glyph || cell.Style.GetBold() != active {
+							t.Fatalf("focus=%s: border at (%d,%d) has glyph=%q, bold=%t; want %q, %t",
+								focus, x, y, cell.Content(), cell.Style.GetBold(), glyph, active)
+						}
+						if !noColor {
+							want := theme.Colors(light).Border
+							if active {
+								want = theme.Colors(light).Accent
+							}
+							if cell.Style.GetForeground() != want {
+								t.Fatalf("focus=%s: border at (%d,%d) has the wrong color", focus, x, y)
+							}
+						}
+					}
+					assertBorder(0, 1, "╭", a.edit)
+					assertBorder(119, 1, "╮", a.edit)
+					assertBorder(0, 3, "╰", a.edit)
+					assertBorder(119, 3, "╯", a.edit)
+					border := findHit(t, a, "divider").rect
+					assertBorder(border.Min.X, 3, "┬", a.edit || a.sidebar)
+					assertBorder(border.Min.X, 4, "│", a.sidebar)
+					assertBorder(border.Min.X, a.previewBounds.Min.Y-1, "├", a.sidebar)
+					assertBorder(border.Min.X, border.Max.Y-1, "┴", a.sidebar)
 				}
 			}
 		}

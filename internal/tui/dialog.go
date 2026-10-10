@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"altscreen.io/vision/ansi"
 	"altscreen.io/vision/event"
 	"altscreen.io/vision/layout"
 	"altscreen.io/vision/screen"
@@ -75,8 +74,7 @@ func (a *app) paintDialog(sc *screen.Screen) {
 	put := func(column, row, width int, value string, st style.Style) {
 		rect := layout.Rect(column, row, width, 1)
 		text.SetStringRect(sc, rect, strings.Repeat(" ", width), st)
-		value = ansi.TruncateMode(value, width, "…", sc.WidthMethod(), sc.AmbiguousWide())
-		text.SetStringRect(sc, rect, value, st)
+		text.SetStringRectTruncate(sc, rect, value, st, "…", st)
 	}
 	for row := y + 1; row < y+height-1; row++ {
 		put(x, row, width, "", panel)

@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"altscreen.io/vision/ansi"
@@ -36,7 +35,28 @@ func underlineShortcut(sc *screen.Screen, x, y int, label string, shortcut rune,
 	}
 }
 
+func (a *app) windowTitle() string {
+	unread := 0
+	for _, item := range a.result.Items {
+		if item.Unread {
+			unread++
+		}
+	}
+	suffix := ""
+	if a.result.More {
+		suffix = "+"
+	}
+	return fmt.Sprintf("gh-notifs - %d%s unread", unread, suffix)
+}
+
 func (a *app) render() error {
+	title := a.windowTitle()
+	if title != a.title {
+		if err := a.program.SetTitle(title); err != nil {
+			return fmt.Errorf("set terminal title: %w", err)
+		}
+		a.title = title
+	}
 	sc := a.program.Screen()
 	a.paint(sc)
 	if a.showCursor != sc.CursorVisible() {
@@ -82,8 +102,7 @@ func (a *app) paint(sc *screen.Screen) {
 			return
 		}
 		text.SetStringRect(sc, layout.Rect(x, y, width, 1), strings.Repeat(" ", width), st)
-		value = ansi.TruncateMode(notifs.Plain(value), width, "…", sc.WidthMethod(), sc.AmbiguousWide())
-		text.SetStringRect(sc, layout.Rect(x, y, width, 1), value, st)
+		text.SetStringRectTruncate(sc, layout.Rect(x, y, width, 1), notifs.Plain(value), st, "…", st)
 	}
 	linkText := func(x, y, width int, value, target string, st style.Style) {
 		if width <= 0 {
@@ -92,8 +111,7 @@ func (a *app) paint(sc *screen.Screen) {
 		if u, err := url.Parse(target); err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && notifs.Plain(target) == target {
 			st = st.Link(target, "")
 		}
-		value = ansi.TruncateMode(notifs.Plain(value), width, "…", sc.WidthMethod(), sc.AmbiguousWide())
-		text.SetStringRect(sc, layout.Rect(x, y, width, 1), value, st)
+		text.SetStringRectTruncate(sc, layout.Rect(x, y, width, 1), notifs.Plain(value), st, "…", st)
 	}
 	button := func(x, y, available int, label, action string, enabled bool, shortcut rune) int {
 		width := sc.StringWidth(label)
@@ -148,6 +166,10 @@ func (a *app) paint(sc *screen.Screen) {
 		footerTop = h - min(len(helpLines)+4, max(6, h/2))
 	}
 	left := 0
+	sideBorder := divider
+	if a.sidebar {
+		sideBorder = accent
+	}
 	entries := a.sideEntries()
 	a.sideIndex = max(0, min(a.sideIndex, len(entries)-1))
 	if !a.sideHidden && w >= 64 {
@@ -157,13 +179,13 @@ func (a *app) paint(sc *screen.Screen) {
 		left = max(18, min(a.sideWidth, w-30))
 		a.target(layout.Rect(0, 4, left, footerTop-4), "side", 0)
 		a.target(layout.Rect(left-1, 3, 1, footerTop-2), "divider", 0)
-		put(left-1, 3, 1, "┬", divider)
+		topBorder := queryBorder
+		if a.sidebar {
+			topBorder = sideBorder
+		}
+		put(left-1, 3, 1, "┬", topBorder)
 		for y := 4; y < footerTop; y++ {
 			put(0, y, left-1, "", normal)
-			sideBorder := divider
-			if a.sidebar {
-				sideBorder = accent
-			}
 			put(left-1, y, 1, "│", sideBorder)
 		}
 		sideHeading := normal.Bold()
@@ -220,8 +242,9 @@ func (a *app) paint(sc *screen.Screen) {
 	if a.result.More {
 		header = fmt.Sprintf("Page %d  │  %d loaded · more available", a.page+1, len(a.result.Items))
 	}
-	nextX := w - 9
-	prevX := nextX - 13
+	const prevLabel, nextLabel = " [ Previous ", " Next ] "
+	nextX := w - sc.StringWidth(nextLabel) - 1
+	prevX := nextX - sc.StringWidth(prevLabel) - 1
 	put(left+1, 4, prevX-left-2, header, dim)
 	for _, control := range []struct {
 		x       int
@@ -229,9 +252,10 @@ func (a *app) paint(sc *screen.Screen) {
 		action  string
 		enabled bool
 	}{
-		{prevX, " [ Previous ", "[", a.page > 0},
-		{nextX, " Next ] ", "]", a.hasNextPage() && !a.loading && !a.acting},
+		{prevX, prevLabel, "[", a.page > 0},
+		{nextX, nextLabel, "]", a.hasNextPage() && !a.loading && !a.acting},
 	} {
+		width := sc.StringWidth(control.label)
 		st := dim
 		if !a.options.NoColor {
 			st = normal.Foreground(palette.Muted).Background(palette.Surface)
@@ -243,9 +267,9 @@ func (a *app) paint(sc *screen.Screen) {
 			} else {
 				st = st.Foreground(palette.Accent).Background(palette.Selection)
 			}
-			a.target(layout.Rect(control.x, 4, len(control.label), 1), control.action, 0)
+			a.target(layout.Rect(control.x, 4, width, 1), control.action, 0)
 		}
-		put(control.x, 4, len(control.label), control.label, st)
+		put(control.x, 4, width, control.label, st)
 	}
 	capacity := max(0, (listBottom-6)/2)
 	if a.cursor-start < a.scroll {
@@ -351,7 +375,7 @@ func (a *app) paint(sc *screen.Screen) {
 	if showPreview {
 		put(left, listBottom, w-left, strings.Repeat("─", w-left), divider)
 		if left > 0 {
-			put(left-1, listBottom, 1, "├", divider)
+			put(left-1, listBottom, 1, "├", sideBorder)
 		}
 		a.paintPreview(sc, layout.Rect(left, listBottom+1, w-left, footerTop-listBottom-1))
 	}
@@ -370,7 +394,7 @@ func (a *app) paint(sc *screen.Screen) {
 	}
 	put(0, footerTop, w, strings.Repeat("─", w), divider)
 	if left > 0 {
-		put(left-1, footerTop, 1, "┴", divider)
+		put(left-1, footerTop, 1, "┴", sideBorder)
 	}
 	statusStyle := dim
 	if (a.loading || a.acting) && !a.options.NoColor {
@@ -429,26 +453,24 @@ func (a *app) paint(sc *screen.Screen) {
 	put(1, h-2, w-2, message, st)
 	x := 1
 	for _, control := range []helpBinding{
-		{"/", "search", "/"}, {"?", "help", "?"}, {"q", "quit", "q"},
-		{"x", "checkbox", "x"}, {"o", "open", "o"}, {"v", "preview", "v"},
-		{"r", "refresh", "r"}, {"e", "done", "e"}, {"I", "I read it", "shift+i"},
-		{"M", "Mute", "shift+m"}, {"S", "Subscribe", "shift+s"},
+		{"/", "search", "/"},
+		{"?", "help", "?"},
+		{"q", "quit", "q"},
+		{"x", "select", "x"},
+		{"o", "open", "o"},
+		{"v", "preview", "v"},
+		{"r", "refresh", "r"},
+		{"e", "done", "e"},
+		{"I", "read", "shift+i"},
+		{"M", "unsubscribe", "shift+m"},
+		{"S", "subscribe", "shift+s"},
 	} {
-		label := control.description
-		shortcut := rune(control.key[0])
-		if !unicode.IsLetter(shortcut) {
-			label = control.key + " " + label
-		}
-		width := sc.StringWidth(label)
+		width := sc.StringWidth(control.key + " " + control.description)
 		if width > w-x-1 {
 			break
 		}
-		put(x, h-1, width, label, dim)
-		if unicode.IsLetter(shortcut) {
-			underlineShortcut(sc, x, h-1, label, shortcut, accent)
-		} else {
-			put(x, h-1, sc.StringWidth(control.key), control.key, accent)
-		}
+		put(x, h-1, sc.StringWidth(control.key), control.key, accent)
+		put(x+sc.StringWidth(control.key)+1, h-1, sc.StringWidth(control.description), control.description, dim)
 		a.target(layout.Rect(x, h-1, width, 1), control.action, 0)
 		x += width + 3
 	}
@@ -472,11 +494,12 @@ func (a *app) paint(sc *screen.Screen) {
 		}
 		for i := 0; i < count; i++ {
 			index := offset + i
+			y := 3 + i
 			st := panel
 			if index == a.completionIndex {
 				st = selected
 			}
-			put(popupX, 4+i, textWidth, " "+suggestions[index], st)
+			put(popupX, y, textWidth, " "+suggestions[index], st)
 			if thumbSize > 0 {
 				mark, markStyle := "│", st
 				if !a.options.NoColor {
@@ -488,9 +511,9 @@ func (a *app) paint(sc *screen.Screen) {
 						markStyle = markStyle.Foreground(palette.Accent)
 					}
 				}
-				put(popupX+textWidth, 4+i, 1, mark, markStyle)
+				put(popupX+textWidth, y, 1, mark, markStyle)
 			}
-			a.target(layout.Rect(popupX, 4+i, popupWidth, 1), "completion", index)
+			a.target(layout.Rect(popupX, y, popupWidth, 1), "completion", index)
 		}
 	}
 	if a.pendingAction != "" {

@@ -124,6 +124,13 @@ func TestEllipsisAndEmptySidebar(t *testing.T) {
 	if sc.CellAt(layout.Pos(59, 6)).Content() != "…" {
 		t.Fatal("long title has no Unicode ellipsis")
 	}
+	for _, x := range []int{9, 59} {
+		st := sc.CellAt(layout.Pos(x, 6)).Style
+		p := theme.Colors(false)
+		if !st.GetBold() || st.GetForeground() != p.Foreground || st.GetBackground() != p.Selection {
+			t.Fatalf("truncated title lost its text or tail style at column %d", x)
+		}
+	}
 	a.result.Items = nil
 	a.sidebar = true
 	a.key(context.Background(), event.Key{Code: 'g', Mod: event.KeyModShift})
