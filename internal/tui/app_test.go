@@ -83,6 +83,47 @@ func TestStaleResultsAndSelection(t *testing.T) {
 	}
 }
 
+func TestQuitKeys(t *testing.T) {
+	a := testApp()
+	ctx := context.Background()
+	for _, preview := range []bool{false, true} {
+		a.showPreview = preview
+		if a.key(ctx, event.Key{Code: event.KeyEscape}) {
+			t.Fatalf("Escape quit the app with preview=%v", preview)
+		}
+	}
+	for _, key := range []event.Key{{Code: 'q'}, {Code: 'c', Mod: event.KeyModCtrl}} {
+		if !a.key(ctx, key) {
+			t.Fatalf("%v did not quit the app", key)
+		}
+	}
+}
+
+func TestClearAllSelections(t *testing.T) {
+	a := testApp()
+	ctx := context.Background()
+	a.result.Items = append(a.result.Items, notifs.Thread{ID: "3", Title: "Another page"})
+	a.key(ctx, event.Key{Code: 'a', Mod: event.KeyModShift})
+	for _, item := range a.result.Items {
+		if !a.selected[item.ID] {
+			t.Fatal("Shift+A did not select every loaded item")
+		}
+	}
+	a.key(ctx, event.Key{Code: 'x', Mod: event.KeyModShift})
+	if len(a.selected) != 0 {
+		t.Fatal("Shift+X did not clear selections across pages")
+	}
+	a.key(ctx, event.Key{Code: 'x'})
+	if !a.selected["1"] {
+		t.Fatal("x did not select an item after clearing selections")
+	}
+	a.edit = true
+	a.key(ctx, event.Key{Code: 'x', Mod: event.KeyModShift})
+	if !a.selected["1"] || string(a.input) != "X" {
+		t.Fatal("Shift+X changed selections instead of editing the query")
+	}
+}
+
 func TestQueryEditor(t *testing.T) {
 	a := testApp()
 	a.key(context.Background(), event.Key{Code: '/'})

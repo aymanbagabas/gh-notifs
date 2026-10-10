@@ -19,80 +19,40 @@ import (
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 )
 
-func TestRefreshSchedule(t *testing.T) {
+func TestManualRefreshDoesNotOverlap(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(w, "[]")
+	}))
+	defer server.Close()
+	cache, err := notifs.OpenCache(t.TempDir(), "github.com", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := testApp()
-	a.focused = true
-	a.options.Interval = 5 * time.Minute
-	now := time.Now()
-	a.receive(context.Background(), message{generation: a.generation, final: true})
-	if a.result.NextPoll.Before(now.Add(5*time.Minute)) || a.result.NextPoll.After(now.Add(5*time.Minute+time.Second)) {
-		t.Fatal("refresh did not use the configured interval")
+	a.client = &notifs.Client{HTTP: server.Client(), BaseURL: server.URL + "/", Cache: cache}
+	a.messages = make(chan message, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); a.workers.Wait() }()
+	a.key(ctx, event.Key{Code: 'r'})
+	if !a.loading {
+		t.Fatal("manual refresh did not start")
 	}
-	if a.refreshDue(a.result.NextPoll.Add(-time.Nanosecond)) || !a.refreshDue(a.result.NextPoll) {
-		t.Fatal("refresh does not respect the scheduled time")
-	}
-	for _, state := range []string{"disabled", "unfocused", "loading", "acting"} {
-		a.options.Interval, a.focused, a.loading, a.acting = 5*time.Minute, true, false, false
-		switch state {
-		case "disabled":
-			a.options.Interval = 0
-		case "unfocused":
-			a.focused = false
-		case "loading":
-			a.loading = true
-		case "acting":
-			a.acting = true
-		}
-		if a.refreshDue(a.result.NextPoll) {
-			t.Fatalf("automatic refresh ran while %s", state)
-		}
-	}
-}
-
-func TestManualRefreshBypassesTimer(t *testing.T) {
-	for _, interval := range []time.Duration{0, 5 * time.Minute} {
-		t.Run(interval.String(), func(t *testing.T) {
-			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				w.Header().Set("X-Poll-Interval", "600")
-				fmt.Fprint(w, "[]")
-			}))
-			defer server.Close()
-			cache, err := notifs.OpenCache(t.TempDir(), "github.com", "test")
-			if err != nil {
-				t.Fatal(err)
-			}
-			a := testApp()
-			a.client = &notifs.Client{HTTP: server.Client(), BaseURL: server.URL + "/", Cache: cache}
-			a.messages = make(chan message, 8)
-			a.options.Interval = interval
-			a.result.NextPoll = time.Now().Add(time.Hour)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer func() { cancel(); a.workers.Wait() }()
-			a.key(ctx, event.Key{Code: 'r'})
-			if !a.loading {
-				t.Fatal("manual refresh waited for the timer")
-			}
-			a.key(ctx, event.Key{Code: 'r'})
-			for {
-				select {
-				case msg := <-a.messages:
-					a.receive(ctx, msg)
-					if msg.final {
-						if msg.err != nil || calls.Load() != 1 {
-							t.Fatalf("refresh failed or overlapped: %v, %d requests", msg.err, calls.Load())
-						}
-						if time.Until(a.result.NextPoll) < 599*time.Second {
-							t.Fatal("automatic schedule ignored GitHub's polling minimum")
-						}
-						return
-					}
-				case <-time.After(5 * time.Second):
-					t.Fatal("manual refresh did not finish")
+	a.key(ctx, event.Key{Code: 'r'})
+	for {
+		select {
+		case msg := <-a.messages:
+			a.receive(ctx, msg)
+			if msg.final {
+				if msg.err != nil || calls.Load() != 1 {
+					t.Fatalf("refresh failed or overlapped: %v, %d requests", msg.err, calls.Load())
 				}
+				return
 			}
-		})
+		case <-time.After(5 * time.Second):
+			t.Fatal("manual refresh did not finish")
+		}
 	}
 }
 
@@ -146,7 +106,7 @@ func TestPolishedLayout(t *testing.T) {
 			}
 		}
 		if width == 120 {
-			for _, want := range []string{"┬", "┴", "pull-request", "review-requested", "auto refresh off"} {
+			for _, want := range []string{"┬", "┴", "⇄", "review-requested", "Refreshed"} {
 				if !strings.Contains(out, want) {
 					t.Fatalf("missing %q", want)
 				}

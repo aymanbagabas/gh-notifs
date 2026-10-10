@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
 
 	"altscreen.io/vision/event"
+	"altscreen.io/vision/layout"
 	"altscreen.io/vision/program"
+	"github.com/aymanbagabas/gh-notifs/internal/config"
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 	"github.com/aymanbagabas/gh-notifs/internal/theme"
 	"github.com/cli/go-gh/v2/pkg/browser"
@@ -21,57 +24,88 @@ type Options struct {
 	Query    notifs.Query
 	PageSize int
 	NoColor  bool
-	Interval time.Duration
+	Scopes   []config.Scope
 }
 
 type message struct {
-	generation int
-	result     *notifs.Result
-	final      bool
-	preview    *notifs.Preview
-	previewID  string
-	action     string
-	ids        []string
-	err        error
+	generation           int
+	result               *notifs.Result
+	final                bool
+	preview              *notifs.Preview
+	previewID            string
+	previewGeneration    int
+	discussionTab        int
+	discussionGeneration int
+	discussion           *notifs.DiscussionPage
+	action               string
+	ids                  []string
+	err                  error
 }
 
 type app struct {
-	client        *notifs.Client
-	program       *program.Program
-	browser       *browser.Browser
-	options       Options
-	query         notifs.Query
-	result        notifs.Result
-	cursor        int
-	page          int
-	scroll        int
-	selected      map[string]bool
-	edit          bool
-	input         []rune
-	caret         int
-	showCursor    bool
-	paste         strings.Builder
-	pasting       bool
-	light         bool
-	markdown      previewRender
-	help          bool
-	sidebar       bool
-	sideIndex     int
-	preview       *notifs.Preview
-	previewID     string
-	previewOffset int
-	showPreview   bool
-	status        string
-	err           error
-	loading       bool
-	acting        bool
-	pendingAction string
-	generation    int
-	cancelFetch   context.CancelFunc
-	cancelPreview context.CancelFunc
-	messages      chan message
-	workers       sync.WaitGroup
-	focused       bool
+	client            *notifs.Client
+	program           *program.Program
+	browser           *browser.Browser
+	options           Options
+	query             notifs.Query
+	result            notifs.Result
+	cursor            int
+	page              int
+	scroll            int
+	selected          map[string]bool
+	edit              bool
+	input             []rune
+	caret             int
+	cutBuffer         string
+	showCursor        bool
+	paste             strings.Builder
+	pasting           bool
+	light             bool
+	markdown          previewRender
+	metadataMarkdown  previewRender
+	help              bool
+	helpOffset        int
+	sidebar           bool
+	sideIndex         int
+	preview           *notifs.Preview
+	previewID         string
+	previewOffset     int
+	previewTab        int
+	discussions       [2]discussionState
+	metadataOffset    int
+	metadataWidth     int
+	metadataHidden    bool
+	metadataFocused   bool
+	previewNarrow     bool
+	previewBounds     layout.Rectangle
+	showPreview       bool
+	status            string
+	err               error
+	loading           bool
+	acting            bool
+	pendingAction     string
+	pendingIDs        []string
+	dialogPosition    layout.Position
+	dialogRect        layout.Rectangle
+	dialogMoved       bool
+	dialogConfirm     bool
+	dialogHover       int
+	generation        int
+	cancelFetch       context.CancelFunc
+	cancelPreview     context.CancelFunc
+	previewGeneration int
+	messages          chan message
+	workers           sync.WaitGroup
+	hits              []hit
+	sideWidth         int
+	sideHidden        bool
+	dragging          string
+	dragOffset        layout.Position
+	hoverID           string
+	hoverSelect       bool
+	collapsed         map[string]bool
+	completionKey     string
+	completionIndex   int
 }
 
 func Run(ctx context.Context, client *notifs.Client, options Options) (err error) {
@@ -94,6 +128,9 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 	if err := p.EnableFocusEvents(); err != nil {
 		return err
 	}
+	if err := p.EnableMouse(program.MouseMotion); err != nil {
+		return err
+	}
 	if !options.NoColor {
 		if err := p.EnableColorSchemeUpdates(); err != nil {
 			return err
@@ -104,7 +141,7 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	a := &app{client: client, program: p, options: options, query: options.Query,
-		selected: make(map[string]bool), messages: make(chan message, 8), focused: true,
+		selected: make(map[string]bool), messages: make(chan message, 8),
 		browser: browser.New("", io.Discard, io.Discard)}
 	defer func() {
 		cancel()
@@ -113,8 +150,6 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 	a.result = client.Cached(a.query, options.PageSize)
 	a.fetch(ctx, false)
 	events := p.Events(ctx)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	for {
 		if err := a.render(); err != nil {
 			return err
@@ -143,6 +178,10 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 				}
 			case event.PasteStartEvent, event.PasteChunkEvent, event.PasteEndEvent:
 				a.handlePaste(ev)
+			case event.MouseClickEvent, event.MouseMoveEvent, event.MouseReleaseEvent, event.MouseWheelEvent:
+				if a.mouse(ctx, ev, p.Screen()) {
+					return nil
+				}
 			case event.ColorSchemeEvent:
 				a.light = event.ColorScheme(ev) == event.ColorSchemeLight
 				if !a.options.NoColor {
@@ -152,23 +191,14 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 				}
 			case event.BackgroundColorEvent:
 				a.light = theme.IsLight(ev.Color)
-			case event.FocusInEvent:
-				a.focused = true
 			case event.FocusOutEvent:
-				a.focused = false
+				a.hoverID, a.hoverSelect = "", false
+				a.dialogHover = 0
 			}
 		case msg := <-a.messages:
 			a.receive(ctx, msg)
-		case <-ticker.C:
-			if a.refreshDue(time.Now()) {
-				a.fetch(ctx, false)
-			}
 		}
 	}
-}
-
-func (a *app) refreshDue(now time.Time) bool {
-	return a.options.Interval > 0 && a.focused && !a.loading && !a.acting && !now.Before(a.result.NextPoll)
 }
 
 func (a *app) send(ctx context.Context, msg message) {
@@ -182,6 +212,7 @@ func (a *app) fetch(ctx context.Context, changed bool) {
 	if a.acting {
 		return
 	}
+	a.resetDiscussions()
 	if a.cancelFetch != nil {
 		a.cancelFetch()
 	}
@@ -230,7 +261,25 @@ func (a *app) receive(ctx context.Context, msg message) {
 		return
 	}
 	if msg.previewID != "" {
+		if !a.showPreview || msg.previewGeneration != a.previewGeneration {
+			return
+		}
 		if current := a.current(); current != nil && current.ID == msg.previewID {
+			if msg.discussionTab > 0 {
+				state := &a.discussions[msg.discussionTab-1]
+				if msg.discussionGeneration != state.generation {
+					return
+				}
+				state.loading, state.err = false, msg.err
+				if msg.err == nil && msg.discussion != nil {
+					if state.page == len(state.pages) {
+						state.pages = append(state.pages, *msg.discussion)
+					} else {
+						state.pages[state.page] = *msg.discussion
+					}
+				}
+				return
+			}
 			a.preview, a.previewID, a.err = msg.preview, msg.previewID, msg.err
 		}
 		return
@@ -260,10 +309,6 @@ func (a *app) receive(ctx context.Context, msg message) {
 		if !a.edit || msg.err != nil {
 			a.err = msg.err
 		}
-		a.result.NextPoll = a.client.NextPoll()
-		if next := time.Now().Add(a.options.Interval); next.After(a.result.NextPoll) {
-			a.result.NextPoll = next
-		}
 		if a.showPreview {
 			a.loadPreview(ctx)
 		}
@@ -283,15 +328,17 @@ func (a *app) clamp() {
 }
 
 func (a *app) move(ctx context.Context, delta int) {
+	previous := a.cursor
 	start := a.page * a.options.PageSize
 	end := min(start+a.options.PageSize, len(a.result.Items))
 	a.cursor = max(start, min(a.cursor+delta, max(start, end-1)))
-	if a.showPreview {
+	if a.showPreview && a.cursor != previous {
 		a.loadPreview(ctx)
 	}
 }
 
 func (a *app) loadPreview(ctx context.Context) {
+	a.resetDiscussions()
 	current := a.current()
 	if current == nil {
 		return
@@ -299,14 +346,29 @@ func (a *app) loadPreview(ctx context.Context) {
 	if a.cancelPreview != nil {
 		a.cancelPreview()
 	}
-	a.preview, a.previewID, a.previewOffset = nil, current.ID, 0
+	a.preview, a.previewID, a.previewOffset, a.metadataOffset = nil, current.ID, 0, 0
+	if !supportsDiscussion(current, a.previewTab) {
+		a.previewTab = 0
+	}
+	a.previewGeneration++
+	previewGeneration := a.previewGeneration
 	item, generation := *current, a.generation
 	job, cancel := context.WithCancel(ctx)
 	a.cancelPreview = cancel
 	a.workers.Go(func() {
+		timer := time.NewTimer(previewDebounce)
+		defer timer.Stop()
+		select {
+		case <-job.Done():
+			return
+		case <-timer.C:
+		}
 		preview, err := a.client.Preview(job, item)
-		a.send(job, message{generation: generation, preview: &preview, previewID: item.ID, err: err})
+		a.send(job, message{generation: generation, preview: &preview, previewID: item.ID, previewGeneration: previewGeneration, err: err})
 	})
+	if a.previewTab > 0 {
+		a.loadDiscussion(ctx, a.previewTab)
+	}
 }
 
 func (a *app) actionIDs() []string {
@@ -324,8 +386,7 @@ func (a *app) actionIDs() []string {
 	return ids
 }
 
-func (a *app) act(ctx context.Context, action string) {
-	ids := a.actionIDs()
+func (a *app) act(ctx context.Context, action string, ids []string) {
 	if len(ids) == 0 || a.acting {
 		return
 	}
@@ -354,22 +415,27 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 		return a.editKey(ctx, key)
 	}
 	if a.pendingAction != "" {
-		action := a.pendingAction
-		a.pendingAction = ""
-		if key.Matches("y") {
-			a.act(ctx, action)
-		}
+		a.dialogKey(ctx, key)
 		return false
 	}
 	if a.help {
-		a.help = false
-		return false
+		switch {
+		case key.MatchesAny("?", "esc"):
+			a.help = false
+			return false
+		case key.MatchesAny("down", "pagedown"):
+			a.helpOffset += 3
+			return false
+		case key.MatchesAny("up", "pageup"):
+			a.helpOffset = max(0, a.helpOffset-3)
+			return false
+		}
 	}
 	switch {
-	case key.MatchesAny("q", "esc"):
+	case key.Matches("q"):
 		return true
 	case key.Matches("?"):
-		a.help = true
+		a.help, a.helpOffset = true, 0
 	case key.MatchesAny("/", "s"):
 		a.edit, a.input = true, []rune(a.query.Raw)
 		a.caret = len(a.input)
@@ -377,9 +443,19 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 		a.apply(ctx, a.options.Query.Raw)
 	case key.Matches("tab"):
 		a.sidebar = !a.sidebar
+	case key.Matches("b"):
+		a.sideHidden = !a.sideHidden
+		if a.sideHidden {
+			a.sidebar = false
+		}
+	case key.Matches("space"):
+		entries := a.sideEntries()
+		if a.sidebar && a.sideIndex < len(entries) {
+			a.toggleGroup(entries[a.sideIndex].group)
+		}
 	case key.MatchesAny("j", "down"):
 		if a.sidebar {
-			a.sideIndex = min(a.sideIndex+1, len(a.sideEntries())-1)
+			a.sideIndex = max(0, min(a.sideIndex+1, len(a.sideEntries())-1))
 		} else {
 			a.move(ctx, 1)
 		}
@@ -397,7 +473,7 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 		}
 	case key.MatchesAny("G", "shift+g", "end"):
 		if a.sidebar {
-			a.sideIndex = len(a.sideEntries()) - 1
+			a.sideIndex = max(0, len(a.sideEntries())-1)
 		} else {
 			a.move(ctx, len(a.result.Items))
 		}
@@ -422,13 +498,13 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 		}
 	case key.Matches("ctrl+d"):
 		if a.showPreview {
-			a.previewOffset += 5
+			a.scrollPreview(5)
 		} else {
 			a.move(ctx, 10)
 		}
 	case key.Matches("ctrl+u"):
 		if a.showPreview {
-			a.previewOffset = max(0, a.previewOffset-5)
+			a.scrollPreview(-5)
 		} else {
 			a.move(ctx, -10)
 		}
@@ -440,16 +516,38 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 		for _, item := range a.result.Items {
 			a.selected[item.ID] = true
 		}
+	case key.MatchesAny("shift+x", "X"):
+		clear(a.selected)
 	case key.MatchesAny("shift+i", "I"):
-		a.act(ctx, "read")
+		a.act(ctx, "read", a.actionIDs())
 	case key.MatchesAny("shift+u", "U"):
 		a.status = "Mark unread is not available through the supported public API."
 	case key.Matches("e"):
-		a.pendingAction = "done"
+		a.confirmAction("done")
 	case key.MatchesAny("shift+m", "M"):
-		a.pendingAction = "unsubscribe"
+		a.confirmAction("unsubscribe")
 	case key.MatchesAny("shift+s", "S"):
-		a.pendingAction = "subscribe"
+		a.confirmAction("subscribe")
+	case key.Matches("m"):
+		if a.showPreview {
+			a.toggleMetadata()
+		}
+	case key.Matches("1"):
+		a.selectPreviewTab(ctx, 0)
+	case key.Matches("2"):
+		a.selectPreviewTab(ctx, 1)
+	case key.Matches("3"):
+		a.selectPreviewTab(ctx, 2)
+	case key.Matches(","):
+		a.changeDiscussionPage(ctx, -1)
+	case key.Matches("."):
+		a.changeDiscussionPage(ctx, 1)
+	case key.Matches("alt+left"):
+		a.metadataFocused = false
+	case key.Matches("alt+right"):
+		if a.showPreview {
+			a.metadataHidden, a.metadataFocused = false, true
+		}
 	case key.Matches("r"):
 		if a.loading {
 			a.status = "A refresh is already in progress."
@@ -461,10 +559,19 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 		a.showPreview = !a.showPreview
 		if a.showPreview {
 			a.loadPreview(ctx)
+		} else {
+			a.resetDiscussions()
+			if a.cancelPreview != nil {
+				a.cancelPreview()
+			}
 		}
 	case key.MatchesAny("enter", "o"):
 		if a.sidebar {
-			a.apply(ctx, a.sideEntries()[a.sideIndex].query)
+			entries := a.sideEntries()
+			if a.sideIndex >= len(entries) {
+				return false
+			}
+			a.apply(ctx, entries[a.sideIndex].query)
 			a.sidebar = false
 		} else if current := a.current(); current != nil {
 			target := current.URL
@@ -507,6 +614,20 @@ func (a *app) handlePaste(ev event.Event) {
 }
 
 func (a *app) editKey(ctx context.Context, key event.Key) bool {
+	suggestions, start, end := a.suggestions()
+	if len(suggestions) > 0 {
+		switch {
+		case key.Matches("down"):
+			a.completionIndex = (a.completionIndex + 1) % len(suggestions)
+			return false
+		case key.Matches("up"):
+			a.completionIndex = (a.completionIndex + len(suggestions) - 1) % len(suggestions)
+			return false
+		case key.MatchesAny("tab", "enter"):
+			a.complete(suggestions[a.completionIndex], start, end)
+			return false
+		}
+	}
 	switch {
 	case key.Matches("esc"):
 		a.edit = false
@@ -522,6 +643,10 @@ func (a *app) editKey(ctx context.Context, key event.Key) bool {
 		a.caret = max(0, a.caret-1)
 	case key.MatchesAny("right", "ctrl+f"):
 		a.caret = min(len(a.input), a.caret+1)
+	case key.MatchesAny("alt+b", "ctrl+left", "alt+left"):
+		a.caret = a.wordBoundary(-1, false)
+	case key.MatchesAny("alt+f", "ctrl+right", "alt+right"):
+		a.caret = a.wordBoundary(1, false)
 	case key.MatchesAny("home", "ctrl+a"):
 		a.caret = 0
 	case key.MatchesAny("end", "ctrl+e"):
@@ -531,17 +656,69 @@ func (a *app) editKey(ctx context.Context, key event.Key) bool {
 			a.input = append(a.input[:a.caret-1], a.input[a.caret:]...)
 			a.caret--
 		}
-	case key.Matches("delete"):
+	case key.MatchesAny("delete", "ctrl+d"):
 		if a.caret < len(a.input) {
 			a.input = append(a.input[:a.caret], a.input[a.caret+1:]...)
 		}
 	case key.Matches("ctrl+u"):
-		a.input = a.input[a.caret:]
-		a.caret = 0
+		a.cutQuery(0, a.caret)
+	case key.Matches("ctrl+k"):
+		a.cutQuery(a.caret, len(a.input))
+	case key.Matches("ctrl+w"):
+		a.cutQuery(a.wordBoundary(-1, true), a.caret)
+	case key.MatchesAny("alt+backspace", "ctrl+backspace"):
+		a.cutQuery(a.wordBoundary(-1, false), a.caret)
+	case key.MatchesAny("alt+d", "ctrl+delete"):
+		a.cutQuery(a.caret, a.wordBoundary(1, false))
+	case key.Matches("ctrl+y"):
+		a.insert(a.cutBuffer)
 	case key.Mod&^(event.KeyModShift|event.KeyModCapsLock|event.KeyModNumLock) == 0 && unicode.IsPrint(key.Code):
-		a.insert(string(key.Code))
+		value := key.Text
+		if value == "" {
+			r := key.Code
+			if key.Mod&event.KeyModShift != 0 {
+				r = unicode.ToUpper(r)
+			}
+			value = string(r)
+		}
+		a.insert(value)
 	}
 	return false
+}
+
+func (a *app) cutQuery(start, end int) {
+	if start == end {
+		return
+	}
+	a.cutBuffer = string(a.input[start:end])
+	a.input = append(a.input[:start], a.input[end:]...)
+	a.caret = start
+}
+
+func (a *app) wordBoundary(direction int, whitespaceOnly bool) int {
+	word := func(r rune) bool {
+		if whitespaceOnly {
+			return !unicode.IsSpace(r)
+		}
+		return unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r)
+	}
+	pos := a.caret
+	if direction < 0 {
+		for pos > 0 && !word(a.input[pos-1]) {
+			pos--
+		}
+		for pos > 0 && word(a.input[pos-1]) {
+			pos--
+		}
+	} else {
+		for pos < len(a.input) && !word(a.input[pos]) {
+			pos++
+		}
+		for pos < len(a.input) && word(a.input[pos]) {
+			pos++
+		}
+	}
+	return pos
 }
 
 func (a *app) apply(ctx context.Context, raw string) bool {
@@ -560,36 +737,46 @@ func (a *app) apply(ctx context.Context, raw string) bool {
 	return true
 }
 
-type sideEntry struct{ label, query string }
+type sideEntry struct {
+	label, query, group string
+	repository          bool
+}
 
 func (a *app) sideEntries() []sideEntry {
-	var scope []string
-	for _, t := range a.query.Terms {
-		if t.Field == "repo" || t.Field == "org" {
-			scope = append(scope, t.Field+":"+t.Value)
-		}
-	}
-	base := strings.Join(scope, " ")
-	entries := []sideEntry{
-		{"Inbox", base},
-		{"Unread", base + " is:unread"},
-		{"Review requested", base + " reason:review-requested"},
-		{"Mentioned", base + " reason:mention"},
-		{"Team mentioned", base + " reason:team-mention"},
-		{"Assigned", base + " reason:assign"},
-		{"All repositories", ""},
+	var entries []sideEntry
+	for _, scope := range a.options.Scopes {
+		entries = append(entries, sideEntry{label: scope.Name, query: scope.Query})
 	}
 	seen := make(map[string]bool)
+	var repos []string
 	for _, t := range a.result.Items {
-		owner, _, _ := strings.Cut(t.Repository, "/")
-		if !seen["org:"+owner] {
-			entries = append(entries, sideEntry{"org:" + owner, "org:" + owner})
-			seen["org:"+owner] = true
-		}
-		if !seen[t.Repository] {
-			entries = append(entries, sideEntry{t.Repository, "repo:" + t.Repository})
+		if t.Repository != "" && !seen[t.Repository] {
+			repos = append(repos, t.Repository)
 			seen[t.Repository] = true
 		}
 	}
+	sort.Strings(repos)
+	previous := ""
+	for _, repo := range repos {
+		owner, _, _ := strings.Cut(repo, "/")
+		if owner != previous {
+			entries = append(entries, sideEntry{label: owner, query: "org:" + owner, group: owner})
+			previous = owner
+		}
+		if !a.collapsed[owner] {
+			entries = append(entries, sideEntry{label: repo, query: "repo:" + repo, repository: true})
+		}
+	}
 	return entries
+}
+
+func (a *app) toggleGroup(group string) {
+	if group == "" {
+		return
+	}
+	if a.collapsed == nil {
+		a.collapsed = make(map[string]bool)
+	}
+	a.collapsed[group] = !a.collapsed[group]
+	a.sideIndex = max(0, min(a.sideIndex, len(a.sideEntries())-1))
 }

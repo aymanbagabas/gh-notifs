@@ -129,4 +129,13 @@ func TestPreviewCacheTracksWidthAndTheme(t *testing.T) {
 	if err != nil || strings.Contains(strings.Join(plain, "\n"), "\x1b") {
 		t.Fatal("no-color change did not update the preview")
 	}
+	a.preview.Metadata = []notifs.PreviewSection{{Name: "Assignees", Items: []string{"@octocat"}, Total: 1}}
+	metadata, err := a.metadataLines(60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := strings.Join(metadata, "\n")
+	if !strings.Contains(out, "@octocat") || strings.Contains(out, "replacement") {
+		t.Fatal("metadata change did not update the separate details pane")
+	}
 }

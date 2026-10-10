@@ -5,8 +5,10 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
+	"altscreen.io/vision/ansi"
 	"altscreen.io/vision/buffer"
 	"altscreen.io/vision/layout"
 	"altscreen.io/vision/screen"
@@ -23,6 +25,15 @@ func OpenBrowser(b *browser.Browser, target string) error {
 		return fmt.Errorf("invalid browser URL")
 	}
 	return b.Browse(target)
+}
+
+func underlineShortcut(sc *screen.Screen, x, y int, label string, shortcut rune, st style.Style) {
+	for offset, r := range label {
+		if r == shortcut {
+			text.SetStringRect(sc, layout.Rect(x+sc.StringWidth(label[:offset]), y, sc.StringWidth(string(r)), 1), string(r), st.Underline())
+			return
+		}
+	}
 }
 
 func (a *app) render() error {
@@ -44,6 +55,7 @@ func (a *app) render() error {
 
 func (a *app) paint(sc *screen.Screen) {
 	buffer.Clear(sc)
+	a.hits = a.hits[:0]
 	a.showCursor = false
 	sc.ClearCursorPosition()
 	w, h := sc.Size().Width, sc.Size().Height
@@ -70,11 +82,45 @@ func (a *app) paint(sc *screen.Screen) {
 			return
 		}
 		text.SetStringRect(sc, layout.Rect(x, y, width, 1), strings.Repeat(" ", width), st)
-		text.SetStringRect(sc, layout.Rect(x, y, width, 1), notifs.Plain(value), st)
+		value = ansi.TruncateMode(notifs.Plain(value), width, "…", sc.WidthMethod(), sc.AmbiguousWide())
+		text.SetStringRect(sc, layout.Rect(x, y, width, 1), value, st)
 	}
-	put(0, 0, w, "", panel)
-	put(1, 0, w-2, "Notifications  │  "+a.client.Host, accent)
-	put(0, 1, w, "╭"+strings.Repeat("─", w-2)+"╮", divider)
+	linkText := func(x, y, width int, value, target string, st style.Style) {
+		if width <= 0 {
+			return
+		}
+		if u, err := url.Parse(target); err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && notifs.Plain(target) == target {
+			st = st.Link(target, "")
+		}
+		value = ansi.TruncateMode(notifs.Plain(value), width, "…", sc.WidthMethod(), sc.AmbiguousWide())
+		text.SetStringRect(sc, layout.Rect(x, y, width, 1), value, st)
+	}
+	button := func(x, y, available int, label, action string, enabled bool, shortcut rune) int {
+		width := sc.StringWidth(label)
+		if width > available {
+			return 0
+		}
+		st := dim
+		if enabled {
+			st = accent
+			a.target(layout.Rect(x, y, width, 1), action, 0)
+		}
+		put(x, y, width, label, st)
+		underlineShortcut(sc, x, y, label, shortcut, st)
+		return width + 2
+	}
+	put(0, 0, w, "", normal)
+	titleBar := normal.Bold()
+	if !a.options.NoColor {
+		titleBar = titleBar.Foreground(palette.Accent)
+	}
+	put(1, 0, w-2, "Notifications  │  "+a.client.Host, titleBar)
+	button(w-12, 0, 12, "Sidebar", "toggle", true, 'b')
+	queryBorder, queryStyle := divider, normal
+	if a.edit {
+		queryBorder = accent
+	}
+	put(0, 1, w, "╭"+strings.Repeat("─", w-2)+"╮", queryBorder)
 	queryText := a.query.Raw
 	if queryText == "" {
 		queryText = "all repositories"
@@ -82,68 +128,91 @@ func (a *app) paint(sc *screen.Screen) {
 	if a.edit {
 		var column int
 		queryText, column = queryViewport(sc, a.input, a.caret, w-10)
-		a.showCursor = !a.help
+		a.showCursor = true
 		sc.SetCursorPosition(layout.Pos(9+column, 2))
 	}
-	put(1, 2, w-2, "Search: "+queryText, selected)
-	put(0, 2, 1, "│", divider)
-	put(w-1, 2, 1, "│", divider)
-	put(0, 3, w, "╰"+strings.Repeat("─", w-2)+"╯", divider)
+	put(1, 2, w-2, "Search: "+queryText, queryStyle)
+	queryLabel := queryStyle.Bold()
+	if !a.options.NoColor {
+		queryLabel = queryLabel.Foreground(palette.Cyan)
+	}
+	put(1, 2, 8, "Search: ", queryLabel)
+	a.target(layout.Rect(1, 2, w-2, 1), "query", 0)
+	put(0, 2, 1, "│", queryBorder)
+	put(w-1, 2, 1, "│", queryBorder)
+	put(0, 3, w, "╰"+strings.Repeat("─", w-2)+"╯", queryBorder)
+	var helpLines [][]helpPart
+	footerTop := h - 4
 	if a.help {
-		lines := []string{
-			"Keyboard shortcuts",
-			"j/k, arrows       Move through the list or sidebar",
-			"/ or s            Edit query; Enter applies; Escape cancels",
-			"Tab               Switch between sidebar and inbox",
-			"x / Shift+A       Select item / select all loaded items",
-			"Enter / o         Open in browser (sidebar: apply filter)",
-			"v                 Toggle preview; Ctrl+D/U scroll preview",
-			"Shift+I           Mark selected notifications read",
-			"e                 Mark done (confirmation required)",
-			"Shift+M / Shift+S  Unsubscribe / subscribe (confirmation)",
-			"[ / ], PgUp/PgDn  Previous / next result page",
-			"g/G, Home/End     First / last item on this page or sidebar",
-			"r / i             Refresh now / return to initial inbox",
-			"? / q / Ctrl+C    Help / quit",
-			"",
-			"Queries: repo:OWNER/REPO org:ORG reason:review-requested",
-			"is:read is:unread is:pr is:issue author:@me state:open",
-			"since:2026-10-01 before:2026-11-01 \"title text\"",
-			"Dates filter notification updates. Terms combine with AND.",
-			"Saved, Done history, and mark-unread have no supported API.",
-		}
-		for i, line := range lines {
-			put(2, 4+i, w-4, line, normal)
-		}
-		return
+		helpLines = helpRows(sc, w-4)
+		footerTop = h - min(len(helpLines)+4, max(6, h/2))
 	}
 	left := 0
-	if w >= 90 {
-		left = 25
+	entries := a.sideEntries()
+	a.sideIndex = max(0, min(a.sideIndex, len(entries)-1))
+	if !a.sideHidden && w >= 64 {
+		if a.sideWidth == 0 {
+			a.sideWidth = 25
+		}
+		left = max(18, min(a.sideWidth, w-30))
+		a.target(layout.Rect(0, 4, left, footerTop-4), "side", 0)
+		a.target(layout.Rect(left-1, 3, 1, footerTop-2), "divider", 0)
 		put(left-1, 3, 1, "┬", divider)
-		for y := 4; y < h-4; y++ {
-			put(left-1, y, 1, "│", divider)
-		}
-		put(1, 4, left-2, "Views and scopes", dim)
-		entries := a.sideEntries()
-		a.sideIndex = min(a.sideIndex, len(entries)-1)
-		offset := max(0, a.sideIndex-(h-10))
-		for i := offset; i < len(entries) && i-offset < h-9; i++ {
-			st := normal
-			if a.sidebar && i == a.sideIndex {
-				st = selected
+		for y := 4; y < footerTop; y++ {
+			put(0, y, left-1, "", normal)
+			sideBorder := divider
+			if a.sidebar {
+				sideBorder = accent
 			}
-			put(1, 5+i-offset, left-2, entries[i].label, st)
+			put(left-1, y, 1, "│", sideBorder)
 		}
-	} else if a.sidebar {
-		entries := a.sideEntries()
-		a.sideIndex = min(a.sideIndex, len(entries)-1)
-		put(1, 4, w-2, "View: "+entries[a.sideIndex].label+" (Enter applies)", accent)
+		sideHeading := normal.Bold()
+		if !a.options.NoColor {
+			sideHeading = sideHeading.Foreground(palette.Muted)
+		}
+		put(1, 4, left-2, "Views and scopes", sideHeading)
+		offset := max(0, a.sideIndex-(footerTop-6))
+		for i := offset; i < len(entries) && i-offset < footerTop-5; i++ {
+			st := normal
+			label := entries[i].label
+			y := 5 + i - offset
+			if entries[i].repository && !a.options.NoColor {
+				st = normal.Foreground(palette.Cyan)
+			}
+			if entries[i].group != "" {
+				st = accent
+				if !a.options.NoColor {
+					st = normal.Foreground(palette.Purple).Bold()
+				}
+				arrow := "▾"
+				if a.collapsed[entries[i].group] {
+					arrow = "▸"
+				}
+				label = arrow + " " + label + " "
+				label += strings.Repeat("─", max(0, left-2-sc.StringWidth(label)))
+			}
+			if a.sidebar && i == a.sideIndex {
+				if a.options.NoColor {
+					st = st.Reverse()
+				} else {
+					st = st.Background(palette.Selection)
+				}
+			}
+			put(1, y, left-2, label, st)
+			a.target(layout.Rect(1, y, left-2, 1), "scope", i)
+			if entries[i].group != "" {
+				a.target(layout.Rect(1, y, 2, 1), "group", i)
+			}
+		}
+	} else if a.sidebar && len(entries) > 0 {
+		put(1, 5, w-2, "View: "+entries[a.sideIndex].label+" (Enter applies)", accent)
 	}
-	listBottom := h - 4
-	if a.showPreview && h >= 20 {
-		listBottom = h / 2
+	listBottom := footerTop
+	showPreview := a.showPreview && footerTop >= 16
+	if showPreview {
+		listBottom = (footerTop + 4) / 2
 	}
+	a.target(layout.Rect(left, 6, w-left, max(0, listBottom-6)), "list", 0)
 	start := a.page * a.options.PageSize
 	end := min(start+a.options.PageSize, len(a.result.Items))
 	pages := max(1, (len(a.result.Items)+a.options.PageSize-1)/a.options.PageSize)
@@ -151,18 +220,33 @@ func (a *app) paint(sc *screen.Screen) {
 	if a.result.More {
 		header = fmt.Sprintf("Page %d  │  %d loaded · more available", a.page+1, len(a.result.Items))
 	}
-	if !(a.sidebar && left == 0) {
-		put(left+1, 4, w-left-2, header, dim)
+	nextX := w - 9
+	prevX := nextX - 13
+	put(left+1, 4, prevX-left-2, header, dim)
+	for _, control := range []struct {
+		x       int
+		label   string
+		action  string
+		enabled bool
+	}{
+		{prevX, " [ Previous ", "[", a.page > 0},
+		{nextX, " Next ] ", "]", a.hasNextPage() && !a.loading && !a.acting},
+	} {
+		st := dim
+		if !a.options.NoColor {
+			st = normal.Foreground(palette.Muted).Background(palette.Surface)
+		}
+		if control.enabled {
+			st = st.Bold()
+			if a.options.NoColor {
+				st = st.Reverse()
+			} else {
+				st = st.Foreground(palette.Accent).Background(palette.Selection)
+			}
+			a.target(layout.Rect(control.x, 4, len(control.label), 1), control.action, 0)
+		}
+		put(control.x, 4, len(control.label), control.label, st)
 	}
-	prevStyle, nextStyle := dim, dim
-	if a.page > 0 {
-		prevStyle = accent
-	}
-	if a.hasNextPage() && !a.loading {
-		nextStyle = accent
-	}
-	put(left+1, 5, 15, "[ Previous", prevStyle)
-	put(left+16, 5, w-left-17, "Next ]", nextStyle)
 	capacity := max(0, (listBottom-6)/2)
 	if a.cursor-start < a.scroll {
 		a.scroll = max(0, a.cursor-start)
@@ -173,34 +257,89 @@ func (a *app) paint(sc *screen.Screen) {
 	for i := start + a.scroll; i < end && i-start-a.scroll < capacity; i++ {
 		item := a.result.Items[i]
 		y := 6 + (i-start-a.scroll)*2
-		mark, read := "[ ]", " "
-		if a.selected[item.ID] {
-			mark = "[x]"
-		}
-		if item.Unread {
-			read = "*"
-		}
 		st := normal
-		if item.Unread {
-			st = st.Bold()
+		hovered := item.ID == a.hoverID
+		if !a.options.NoColor {
+			if hovered {
+				st = st.Background(palette.Surface)
+			}
+			if a.selected[item.ID] {
+				st = st.Background(palette.Selected)
+			}
 		}
 		if i == a.cursor && !a.sidebar {
 			st = selected
 		}
-		put(left+1, y, w-left-2, mark+read+" "+item.Title, st)
-		meta := fmt.Sprintf("     %s  %s %s  %s  %s", item.Reference(), notifs.TypeName(item.Type), item.State, notifs.ReasonName(item.Reason), age(item.UpdatedAt))
-		metaStyle := dim
+		put(left, y, w-left, "", st)
+		metaStyle := st
+		if !a.options.NoColor {
+			metaStyle = st.Foreground(palette.Muted)
+		} else {
+			metaStyle = st.Faint()
+		}
+		put(left, y+1, w-left, "", metaStyle)
+		if item.Unread {
+			dotStyle := st.Bold()
+			if !a.options.NoColor {
+				dotStyle = dotStyle.Foreground(palette.Accent)
+			}
+			put(left+1, y, 1, "●", dotStyle)
+		}
+		mark, markStyle := "   ", metaStyle
+		if a.selected[item.ID] || hovered {
+			mark = " ✓ "
+			if a.selected[item.ID] || a.hoverSelect {
+				markStyle = st.Bold()
+				if !a.options.NoColor {
+					markStyle = markStyle.Foreground(palette.Accent)
+					if a.selected[item.ID] {
+						markStyle = markStyle.Foreground(palette.Success)
+					}
+				}
+			}
+		}
+		put(left+3, y, 3, mark, markStyle)
+		iconStyle := metaStyle
 		if !a.options.NoColor {
 			switch item.State {
 			case "open":
-				metaStyle = normal.Foreground(palette.Success)
+				iconStyle = st.Foreground(palette.Success)
 			case "merged":
-				metaStyle = normal.Foreground(palette.Purple)
+				iconStyle = st.Foreground(palette.Purple)
 			case "closed":
-				metaStyle = normal.Foreground(palette.Danger)
+				iconStyle = st.Foreground(palette.Danger)
 			}
 		}
-		put(left+1, y+1, w-left-2, meta, metaStyle)
+		put(left+7, y, 2, typeIcon(item.Type), iconStyle)
+		titleStyle := st
+		if item.Unread {
+			titleStyle = titleStyle.Bold()
+		}
+		put(left+9, y, w-left-9, item.Title, titleStyle)
+
+		detailX := left + 9
+		detailWidth := w - detailX
+		const ageWidth = 11
+		ageX := w - ageWidth
+		ageText := age(item.UpdatedAt)
+		put(ageX, y+1, ageWidth, strings.Repeat(" ", max(0, ageWidth-sc.StringWidth(ageText)))+ageText, metaStyle)
+		reasonWidth := max(0, detailWidth/2-ageWidth-3)
+		reasonX := ageX - 3 - reasonWidth
+		if reason := notifs.ReasonName(item.Reason); reason != "" && reasonWidth > 0 {
+			reason = ansi.TruncateMode(reason, reasonWidth, "…", sc.WidthMethod(), sc.AmbiguousWide())
+			put(reasonX, y+1, reasonWidth, strings.Repeat(" ", max(0, reasonWidth-sc.StringWidth(reason)))+reason, metaStyle)
+		}
+		referenceWidth := max(0, reasonX-detailX-2)
+		suffix := ""
+		if item.State != "" && referenceWidth >= sc.StringWidth(item.State)+7 {
+			suffix = " · " + item.State
+			referenceWidth -= sc.StringWidth(suffix)
+		}
+		reference := ansi.TruncateMode(notifs.Plain(item.Reference()), referenceWidth, "…", sc.WidthMethod(), sc.AmbiguousWide())
+		linkText(detailX, y+1, referenceWidth, reference, item.URL, metaStyle)
+		put(detailX+sc.StringWidth(reference), y+1, sc.StringWidth(suffix), suffix, metaStyle)
+		a.target(layout.Rect(left, y, w-left, 2), "item", i)
+		a.target(layout.Rect(left+3, y, 3, 1), "checkbox", i)
 	}
 	if len(a.result.Items) == 0 {
 		message := "No notifications match this query."
@@ -209,23 +348,12 @@ func (a *app) paint(sc *screen.Screen) {
 		}
 		put(left+1, 6, w-left-2, message, dim)
 	}
-	if a.showPreview && h >= 20 {
+	if showPreview {
 		put(left, listBottom, w-left, strings.Repeat("─", w-left), divider)
 		if left > 0 {
 			put(left-1, listBottom, 1, "├", divider)
 		}
-		put(left+1, listBottom+1, w-left-2, "Preview  │  Ctrl+D/U scroll  │  v closes", accent)
-		lines, err := a.previewLines(w - left - 2)
-		if err != nil {
-			a.err = fmt.Errorf("render Markdown preview: %w", err)
-			lines = []string{"The preview could not be rendered."}
-		}
-		a.previewOffset = min(a.previewOffset, max(0, len(lines)-1))
-		painter := text.NewPainter(sc)
-		for i := a.previewOffset; i < len(lines) && listBottom+2+i-a.previewOffset < h-4; i++ {
-			rect := layout.Rect(left+1, listBottom+2+i-a.previewOffset, w-left-2, 1)
-			painter.SetStringRect(rect, lines[i], normal)
-		}
+		a.paintPreview(sc, layout.Rect(left, listBottom+1, w-left, footerTop-listBottom-1))
 	}
 	status := "Not refreshed yet"
 	if !a.result.CheckedAt.IsZero() {
@@ -236,28 +364,165 @@ func (a *app) paint(sc *screen.Screen) {
 	}
 	if a.loading {
 		status += " │ refreshing..."
-	} else if a.options.Interval == 0 {
-		status += " │ auto refresh off"
-	} else if wait := time.Until(a.result.NextPoll); wait > 0 {
-		status += " │ refresh in " + wait.Round(time.Second).String()
 	}
 	if a.acting {
 		status += " │ applying action..."
 	}
-	put(0, h-4, w, strings.Repeat("─", w), divider)
+	put(0, footerTop, w, strings.Repeat("─", w), divider)
 	if left > 0 {
-		put(left-1, h-4, 1, "┴", divider)
+		put(left-1, footerTop, 1, "┴", divider)
 	}
-	put(1, h-3, w-2, status, dim)
+	statusStyle := dim
+	if (a.loading || a.acting) && !a.options.NoColor {
+		statusStyle = normal.Foreground(palette.Warning)
+	}
+	position := "-"
+	if a.current() != nil {
+		position = fmt.Sprint(a.cursor + 1)
+	} else if len(a.result.Items) == 0 {
+		position = "0"
+	}
+	counter := fmt.Sprintf("Item %s/%d", position, len(a.result.Items))
+	if a.result.More {
+		counter += "+"
+	}
+	counterWidth := sc.StringWidth(counter)
+	counterX := w - counterWidth - 1
+	put(1, footerTop+1, counterX-3, status, statusStyle)
+	put(counterX, footerTop+1, counterWidth, counter, dim)
+	if a.help {
+		a.target(layout.Rect(0, footerTop, w, h-footerTop), "help", 0)
+		visible := h - footerTop - 4
+		a.helpOffset = min(a.helpOffset, max(0, len(helpLines)-visible))
+		label := fmt.Sprintf("Help %d-%d/%d · ↑/↓ or wheel", a.helpOffset+1, a.helpOffset+visible, len(helpLines))
+		put(2, footerTop, min(sc.StringWidth(label), w-18), label, accent)
+		button(w-14, footerTop, 14, "? Close help", "?", true, 0)
+		for i := 0; i < visible && a.helpOffset+i < len(helpLines); i++ {
+			y := footerTop + 2 + i
+			for _, part := range helpLines[a.helpOffset+i] {
+				x := 2 + part.x
+				if part.key != "" {
+					keyStyle := accent
+					if part.keyWidth == 0 && !a.options.NoColor {
+						keyStyle = keyStyle.Foreground(palette.Purple)
+					}
+					put(x, y, sc.StringWidth(part.key), part.key, keyStyle)
+				}
+				descriptionStyle := dim
+				if strings.HasPrefix(part.description, "Try:") && !a.options.NoColor {
+					descriptionStyle = normal.Foreground(palette.Cyan)
+				}
+				put(x+part.keyWidth, y, sc.StringWidth(part.description), part.description, descriptionStyle)
+				if part.action != "" {
+					a.target(layout.Rect(x, y, part.keyWidth+sc.StringWidth(part.description), 1), part.action, 0)
+				}
+			}
+		}
+	}
 	message, st := a.status, normal
 	if a.err != nil {
 		message, st = "Error: "+a.err.Error(), warning
-	}
-	if a.pendingAction != "" {
-		message, st = fmt.Sprintf("%s %d notification(s)? y confirms; any other key cancels", a.pendingAction, len(a.actionIDs())), warning
+		if !a.options.NoColor {
+			st = st.Foreground(palette.Danger)
+		}
 	}
 	put(1, h-2, w-2, message, st)
-	put(1, h-1, w-2, "/ query  r refresh  g/G top/end  [/] pages  ? help  q quit", dim)
+	x := 1
+	for _, control := range []helpBinding{
+		{"/", "search", "/"}, {"?", "help", "?"}, {"q", "quit", "q"},
+		{"x", "checkbox", "x"}, {"o", "open", "o"}, {"v", "preview", "v"},
+		{"r", "refresh", "r"}, {"e", "done", "e"}, {"I", "I read it", "shift+i"},
+		{"M", "Mute", "shift+m"}, {"S", "Subscribe", "shift+s"},
+	} {
+		label := control.description
+		shortcut := rune(control.key[0])
+		if !unicode.IsLetter(shortcut) {
+			label = control.key + " " + label
+		}
+		width := sc.StringWidth(label)
+		if width > w-x-1 {
+			break
+		}
+		put(x, h-1, width, label, dim)
+		if unicode.IsLetter(shortcut) {
+			underlineShortcut(sc, x, h-1, label, shortcut, accent)
+		} else {
+			put(x, h-1, sc.StringWidth(control.key), control.key, accent)
+		}
+		a.target(layout.Rect(x, h-1, width, 1), control.action, 0)
+		x += width + 3
+	}
+	suggestions, _, _ := a.suggestions()
+	if len(suggestions) > 0 {
+		_, column := queryViewport(sc, a.input, a.caret, w-10)
+		popupWidth := 24
+		for _, value := range suggestions {
+			popupWidth = max(popupWidth, sc.StringWidth(value)+3)
+		}
+		popupWidth = min(popupWidth, w-2)
+		popupX := min(9+column, w-popupWidth-1)
+		count := min(8, h-8, len(suggestions))
+		offset := max(0, a.completionIndex-count+1)
+		textWidth := popupWidth
+		thumbSize, thumbStart := 0, 0
+		if len(suggestions) > count {
+			textWidth--
+			thumbSize = max(1, count*count/len(suggestions))
+			thumbStart = offset * (count - thumbSize) / (len(suggestions) - count)
+		}
+		for i := 0; i < count; i++ {
+			index := offset + i
+			st := panel
+			if index == a.completionIndex {
+				st = selected
+			}
+			put(popupX, 4+i, textWidth, " "+suggestions[index], st)
+			if thumbSize > 0 {
+				mark, markStyle := "│", st
+				if !a.options.NoColor {
+					markStyle = st.Foreground(palette.Border)
+				}
+				if i >= thumbStart && i < thumbStart+thumbSize {
+					mark, markStyle = "┃", st.Bold()
+					if !a.options.NoColor {
+						markStyle = markStyle.Foreground(palette.Accent)
+					}
+				}
+				put(popupX+textWidth, 4+i, 1, mark, markStyle)
+			}
+			a.target(layout.Rect(popupX, 4+i, popupWidth, 1), "completion", index)
+		}
+	}
+	if a.pendingAction != "" {
+		a.paintDialog(sc)
+	}
+}
+
+func typeIcon(kind string) string {
+	switch notifs.TypeName(kind) {
+	case "pull-request":
+		return "⇄"
+	case "issue":
+		return "⊙"
+	case "discussion":
+		return "◇"
+	case "release":
+		return "◆"
+	case "commit":
+		return "●"
+	case "check-suite":
+		return "✓"
+	case "repository-invitation":
+		return "⊕"
+	case "repository-vulnerability-alert":
+		return "⚠"
+	case "repository-advisory":
+		return "△"
+	case "gist":
+		return "≡"
+	default:
+		return "○"
+	}
 }
 
 func queryViewport(sc *screen.Screen, input []rune, caret, width int) (string, int) {

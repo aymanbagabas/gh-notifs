@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/aymanbagabas/gh-notifs/internal/config"
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 	"github.com/aymanbagabas/gh-notifs/internal/tui"
 	"github.com/cli/go-gh/v2/pkg/auth"
@@ -34,7 +34,7 @@ Options:
   --hostname HOST   GitHub host; defaults to the gh configuration
   --limit N         Results per page (default 50; alias -n)
   --page N          List result page (default 1; list only)
-  --interval TIME   Automatic refresh interval (default 5m; 0 disables)
+  --config PATH     Scope configuration file (interactive inbox only)
   --no-color        Disable TUI color
   --header          Include column names in TSV
   --version         Print version
@@ -82,15 +82,15 @@ func Run(ctx context.Context, args []string, version string) error {
 	}
 	flags := flag.NewFlagSet("gh notifs", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	var queryText, repo, org, host string
+	var queryText, repo, org, host, configPath string
 	var global, header, noColor, showVersion bool
 	var limit, page int
-	var interval time.Duration
 	flags.StringVar(&queryText, "query", "", "notification query")
 	flags.StringVar(&repo, "repo", "", "repository scope")
 	flags.StringVar(&repo, "R", "", "repository scope")
 	flags.StringVar(&org, "org", "", "organization scope")
 	flags.StringVar(&host, "hostname", "", "GitHub host")
+	flags.StringVar(&configPath, "config", "", "scope configuration file")
 	flags.BoolVar(&global, "global", false, "all repositories")
 	flags.BoolVar(&header, "header", false, "TSV header")
 	flags.BoolVar(&noColor, "no-color", false, "disable colors")
@@ -98,7 +98,6 @@ func Run(ctx context.Context, args []string, version string) error {
 	flags.IntVar(&limit, "limit", 50, "result limit")
 	flags.IntVar(&limit, "n", 50, "result limit")
 	flags.IntVar(&page, "page", 1, "result page")
-	flags.DurationVar(&interval, "interval", 5*time.Minute, "automatic refresh interval; 0 disables")
 	flags.Usage = func() { fmt.Fprint(flags.Output(), help) }
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -112,9 +111,6 @@ func Run(ctx context.Context, args []string, version string) error {
 	}
 	if limit < 1 || page < 1 || limit > int(^uint(0)>>1)/page {
 		return fmt.Errorf("--limit and --page must be positive and their product must fit an integer")
-	}
-	if interval < 0 {
-		return fmt.Errorf("--interval must be zero or a positive duration")
 	}
 	if command == "" && page != 1 {
 		return fmt.Errorf("--page requires the list command")
@@ -188,7 +184,18 @@ func Run(ctx context.Context, args []string, version string) error {
 		return err
 	}
 	if command == "" && term.IsTerminal(os.Stdin) && term.IsTerminal(os.Stdout) {
-		return tui.Run(ctx, client, tui.Options{Query: query, PageSize: limit, Interval: interval, NoColor: noColor || term.IsColorDisabled()})
+		if configPath == "" {
+			configPath, err = config.Path()
+			if err != nil {
+				return err
+			}
+		}
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return err
+		}
+		return tui.Run(ctx, client, tui.Options{Query: query, PageSize: limit,
+			NoColor: noColor || term.IsColorDisabled(), Scopes: cfg.Scopes})
 	}
 	result, err := client.Fetch(ctx, query, limit*page, nil)
 	if err != nil {

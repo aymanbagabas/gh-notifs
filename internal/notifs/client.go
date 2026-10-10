@@ -31,7 +31,6 @@ type Client struct {
 	identityKey  string
 	mu           sync.Mutex
 	login        string
-	pollInterval time.Duration
 	blockedUntil time.Time
 	details      map[string]Thread
 }
@@ -60,18 +59,11 @@ func NewClient(host string) (*Client, error) {
 		graphql = "https://" + host + "/api/graphql"
 	}
 	c := &Client{HTTP: httpClient, BaseURL: base, GraphQL: graphql, Host: host,
-		cacheRoot: root, identityKey: cacheKey(host, token),
-		pollInterval: time.Minute, details: make(map[string]Thread)}
+		cacheRoot: root, identityKey: cacheKey(host, token), details: make(map[string]Thread)}
 	if _, err := c.loadIdentity(); err != nil {
 		return nil, err
 	}
 	return c, nil
-}
-
-func (c *Client) NextPoll() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return maxTime(time.Now().Add(c.pollInterval), c.blockedUntil)
 }
 
 func (c *Client) BlockedUntil() time.Time {
@@ -118,9 +110,6 @@ func (c *Client) request(ctx context.Context, method, endpoint string, body io.R
 		return nil, err
 	}
 	c.mu.Lock()
-	if seconds, err := strconv.Atoi(resp.Header.Get("X-Poll-Interval")); err == nil && seconds > 0 {
-		c.pollInterval = time.Duration(seconds) * time.Second
-	}
 	if resp.StatusCode == 429 || resp.StatusCode == 403 {
 		until := time.Now().Add(time.Minute)
 		if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
@@ -348,7 +337,6 @@ func (c *Client) Fetch(ctx context.Context, q Query, limit int, progress func(Re
 			result.Items = result.Items[:limit]
 		}
 		result.Pages = n
-		result.NextPoll = c.NextPoll()
 		if progress != nil {
 			copyResult := result
 			copyResult.Items = append([]Thread(nil), result.Items...)

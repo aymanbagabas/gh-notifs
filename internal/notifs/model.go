@@ -84,7 +84,6 @@ type Result struct {
 	Items     []Thread
 	More      bool
 	CheckedAt time.Time
-	NextPoll  time.Time
 	FromCache bool
 	Pages     int
 }

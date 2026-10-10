@@ -22,7 +22,7 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 		t.Fatal(err)
 	}
 	return &Client{HTTP: server.Client(), BaseURL: server.URL + "/", GraphQL: server.URL + "/graphql",
-		Host: "github.com", Cache: cache, pollInterval: time.Minute, details: make(map[string]Thread)}
+		Host: "github.com", Cache: cache, details: make(map[string]Thread)}
 }
 
 func threadJSON(id, kind, reason string) string {
@@ -31,11 +31,10 @@ func threadJSON(id, kind, reason string) string {
 "subject":{"type":%q,"title":"Fix uploads","url":"https://api.github.com/repos/acme/app/pulls/7"}}`, id, reason, kind)
 }
 
-func TestConditionalPolling(t *testing.T) {
+func TestConditionalRefresh(t *testing.T) {
 	var requests atomic.Int32
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		w.Header().Set("X-Poll-Interval", "120")
 		if r.Header.Get("If-None-Match") == `"inbox"` {
 			w.WriteHeader(http.StatusNotModified)
 			return
@@ -49,7 +48,7 @@ func TestConditionalPolling(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(result.Items) != 1 || result.Items[0].Number != 7 || result.More || time.Until(result.NextPoll) < 119*time.Second {
+		if len(result.Items) != 1 || result.Items[0].Number != 7 || result.More {
 			t.Fatalf("unexpected result: %+v", result)
 		}
 	}
