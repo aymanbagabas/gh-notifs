@@ -6,14 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 )
 
 type identity struct {
-	ID    int64  `json:"id"`
-	Login string `json:"login"`
+	ID     int64  `json:"id"`
+	NodeID string `json:"node_id"`
+	Login  string `json:"login"`
 }
 
 func (c *Client) identityPath() string {
@@ -36,15 +38,15 @@ func (c *Client) loadIdentity() (bool, error) {
 }
 
 func (c *Client) useIdentity(user identity) error {
-	if user.ID <= 0 || user.Login == "" {
-		return fmt.Errorf("GitHub identity requires a positive user ID and a login")
+	if user.ID <= 0 || user.Login == "" || user.NodeID == "" {
+		return fmt.Errorf("GitHub identity requires a positive user ID, a node ID, and a login")
 	}
 	cache, err := OpenCache(c.cacheRoot, c.Host, strconv.FormatInt(user.ID, 10))
 	if err != nil {
 		return fmt.Errorf("open account cache: %w", err)
 	}
 	c.mu.Lock()
-	c.Cache, c.login = cache, user.Login
+	c.Cache, c.accountID = cache, user.NodeID
 	c.mu.Unlock()
 	return nil
 }
@@ -75,11 +77,63 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return fmt.Errorf("decode account identity: %w", err)
 	}
-	if user.ID <= 0 || user.Login == "" {
+	if user.ID <= 0 || user.Login == "" || user.NodeID == "" {
 		return fmt.Errorf("GitHub returned an invalid account identity")
 	}
 	if err := writeJSON(c.identityPath(), user); err != nil {
 		return fmt.Errorf("save account identity: %w", err)
 	}
 	return c.useIdentity(user)
+}
+
+func (c *Client) resolveAuthors(ctx context.Context, q Query) (map[string]string, error) {
+	names := q.values("author")
+	if len(names) == 0 {
+		return nil, nil
+	}
+	c.authorMu.Lock()
+	defer c.authorMu.Unlock()
+	if c.authors == nil {
+		c.authors = make(map[string]string)
+	}
+	resolved := make(map[string]string, len(names))
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		id := c.authors[name]
+		if name == "@me" {
+			c.mu.Lock()
+			id = c.accountID
+			c.mu.Unlock()
+			if id == "" {
+				id = c.authors[name]
+			}
+		}
+		if id == "" {
+			endpoint := "users/" + url.PathEscape(name)
+			if name == "@me" {
+				endpoint = "user"
+			}
+			resp, err := c.request(ctx, http.MethodGet, endpoint, nil, nil)
+			if err != nil {
+				return nil, fmt.Errorf("resolve author %q: %w", name, err)
+			}
+			var user struct {
+				NodeID string `json:"node_id"`
+			}
+			err = json.NewDecoder(resp.Body).Decode(&user)
+			resp.Body.Close()
+			if err != nil {
+				return nil, fmt.Errorf("decode author %q: %w", name, err)
+			}
+			if user.NodeID == "" {
+				return nil, fmt.Errorf("GitHub returned no node ID for author %q", name)
+			}
+			id = user.NodeID
+			c.authors[name] = id
+		}
+		resolved[name] = id
+	}
+	return resolved, nil
 }

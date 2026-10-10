@@ -14,8 +14,9 @@ type Term struct {
 }
 
 type Query struct {
-	Raw   string
-	Terms []Term
+	Raw       string
+	Terms     []Term
+	authorIDs map[string]string
 }
 
 func ParseQuery(input string) (Query, error) {
@@ -103,6 +104,10 @@ func (q Query) match(t Thread, login string, participating bool) bool {
 			owner, _, _ := strings.Cut(t.Repository, "/")
 			matched = strings.EqualFold(owner, value)
 		case "author":
+			if q.authorIDs != nil {
+				matched = t.AuthorID != "" && t.AuthorID == q.authorIDs[value]
+				break
+			}
 			if value == "@me" {
 				value = strings.ToLower(login)
 			}
@@ -184,7 +189,7 @@ func (q Query) Requests() []Query {
 	splitReasons := slices.Contains(q.values("reason"), "participating") && !q.participatingOnly()
 	var requests []Query
 	for _, repo := range repos {
-		request := Query{Raw: q.Raw}
+		request := Query{Raw: q.Raw, authorIDs: q.authorIDs}
 		for _, term := range q.Terms {
 			if term.Field != "repo" {
 				request.Terms = append(request.Terms, term)
@@ -197,7 +202,7 @@ func (q Query) Requests() []Query {
 			requests = append(requests, request)
 			continue
 		}
-		participating, other := Query{Raw: q.Raw}, Query{Raw: q.Raw}
+		participating, other := Query{Raw: q.Raw, authorIDs: q.authorIDs}, Query{Raw: q.Raw, authorIDs: q.authorIDs}
 		for _, term := range request.Terms {
 			if term.Field != "reason" {
 				participating.Terms = append(participating.Terms, term)

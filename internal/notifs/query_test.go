@@ -67,6 +67,32 @@ func TestQuery(t *testing.T) {
 	}
 }
 
+func TestResolvedAuthorsSurviveRequestSplits(t *testing.T) {
+	q, err := ParseQuery("repo:acme/app repo:acme/other reason:participating reason:subscribed author:newname author:someone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.authorIDs = map[string]string{"newname": "U_42", "someone": "U_99"}
+	requests := q.Requests()
+	if len(requests) != 4 {
+		t.Fatalf("expected repository and reason splits, got %d", len(requests))
+	}
+	for _, request := range requests {
+		item := Thread{Repository: request.values("repo")[0], Reason: "subscribed", Author: "oldname", AuthorID: "U_42"}
+		if !request.match(item, "", true) {
+			t.Fatal("request split lost resolved author identity")
+		}
+		item.Author, item.AuthorID = "newname", "U_other"
+		if request.match(item, "", true) {
+			t.Fatal("matching login overrode a different author ID")
+		}
+		item.AuthorID = ""
+		if request.match(item, "", true) {
+			t.Fatal("missing author identity fell back to display text")
+		}
+	}
+}
+
 func TestNotificationTypeFilters(t *testing.T) {
 	for _, tc := range []struct {
 		filter string

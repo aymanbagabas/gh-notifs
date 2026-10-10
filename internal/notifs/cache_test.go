@@ -14,6 +14,178 @@ import (
 	"time"
 )
 
+func TestCachedDetailsUpdateOnlyMatchingFields(t *testing.T) {
+	cache, err := OpenCache(t.TempDir(), "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := Thread{ID: "1", Repository: "acme/app", Number: 7, Type: "PullRequest",
+		UpdatedAt: time.Now(), Title: "Current title", Unread: true, Reason: "mention"}
+	other := item
+	other.UpdatedAt = item.UpdatedAt.Add(time.Hour)
+	page := Page{Items: []Thread{item, other}, ETag: `"inbox"`, LastModified: "unchanged",
+		Next: true, CheckedAt: time.Now()}
+	cache.Put("page", page)
+	cache.Put("another-query", page)
+	detail := item
+	detail.Author, detail.AuthorID, detail.State, detail.URL = "octocat", "U_42", "open", "https://github.com/acme/app/pull/7"
+	detail.Title, detail.Unread, detail.Reason = "Old title", false, "subscribed"
+	if err := cache.storeDetails([]Thread{detail}, cache.Generation()); err != nil {
+		t.Fatal(err)
+	}
+	want := page
+	want.Items = []Thread{item, other}
+	want.Items[0].copyDetails(detail)
+	for _, key := range []string{"page", "another-query"} {
+		got, ok := cache.Get(key)
+		if !ok || !reflect.DeepEqual(got, want) {
+			t.Fatalf("detail write changed unrelated fields: %+v", got)
+		}
+	}
+	if page.Items[0].Author != "" {
+		t.Fatal("detail write mutated the caller's page")
+	}
+	snapshot := cache.detailSnapshot()
+	delete(snapshot, detailKey(item))
+	if len(cache.detailSnapshot()) != 1 {
+		t.Fatal("detail snapshot shares mutable cache state")
+	}
+	if err := os.WriteFile(cache.path, []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.storeDetails([]Thread{detail}, cache.Generation()); err == nil {
+		t.Fatal("detail write hid a cache read error")
+	}
+}
+
+func TestLateDetailsCannotRestoreInvalidatedPages(t *testing.T) {
+	for _, external := range []bool{false, true} {
+		t.Run(fmt.Sprintf("external=%t", external), func(t *testing.T) {
+			root := t.TempDir()
+			cache, err := OpenCache(root, "github.com", "account")
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := Thread{ID: "1", Repository: "acme/app", Number: 7, Type: "PullRequest",
+				UpdatedAt: time.Now(), Author: "oldname", AuthorID: "U_42", State: "open"}
+			cache.Put("page", Page{Items: []Thread{item}, CheckedAt: time.Now()})
+			if err := cache.Save(); err != nil {
+				t.Fatal(err)
+			}
+			generation := cache.Generation()
+			action := cache
+			if external {
+				action, err = OpenCache(root, "github.com", "account")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := action.Invalidate(); err != nil {
+				t.Fatal(err)
+			}
+			current := item
+			current.Author = "current"
+			action.Put("new-page", Page{Items: []Thread{current}, CheckedAt: time.Now()})
+			if err := action.Save(); err != nil {
+				t.Fatal(err)
+			}
+			item.Author = "late-response"
+			if err := cache.storeDetails([]Thread{item}, generation); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := OpenCache(root, "github.com", "account")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := reopened.Get("page"); ok {
+				t.Fatal("late details restored a removed page")
+			}
+			if page, ok := reopened.Get("new-page"); !ok || page.Items[0].Author != "current" {
+				t.Fatal("late details overwrote the replacement page")
+			}
+			isolated, err := OpenCache(root, "github.com", "other-account")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(isolated.detailSnapshot()) != 0 {
+				t.Fatal("author details crossed account boundaries")
+			}
+		})
+	}
+}
+
+func TestCacheSaveMergesNewerPages(t *testing.T) {
+	root := t.TempDir()
+	first, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	first.Put("shared", Page{Items: []Thread{{ID: "old"}}, CheckedAt: now.Add(-time.Minute)})
+	if err := first.Save(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Put("local-only", Page{Items: []Thread{{ID: "local"}}, CheckedAt: now})
+	first.Put("local-newer", Page{Items: []Thread{{ID: "newer"}}, CheckedAt: now})
+	second.Put("shared", Page{Items: []Thread{}, ETag: `"empty"`, CheckedAt: now})
+	second.Put("disk-only", Page{Items: []Thread{{ID: "disk"}}, CheckedAt: now})
+	second.Put("local-newer", Page{Items: []Thread{{ID: "older"}}, CheckedAt: now.Add(-time.Second)})
+	if err := second.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page, ok := reopened.Get("shared"); !ok || len(page.Items) != 0 || page.ETag != `"empty"` {
+		t.Fatal("stale save replaced the newer shared page")
+	}
+	for key, id := range map[string]string{"local-only": "local", "disk-only": "disk", "local-newer": "newer"} {
+		if page, ok := reopened.Get(key); !ok || len(page.Items) != 1 || page.Items[0].ID != id {
+			t.Fatalf("merge lost the latest %s page: %+v", key, page)
+		}
+	}
+}
+
+func TestCacheSavePreservesAnotherClientsDetails(t *testing.T) {
+	root := t.TempDir()
+	first, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := Thread{ID: "1", Repository: "acme/app", Type: "Issue", Number: 7,
+		Author: "oldname", AuthorID: "U_42", State: "open"}
+	first.Put("page", Page{Items: []Thread{item}, CheckedAt: time.Now()})
+	if err := first.Save(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.Author = "newname"
+	if err := second.storeDetails([]Thread{item}, second.Generation()); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page, ok := reopened.Get("page"); !ok || len(page.Items) != 1 || page.Items[0].Author != "newname" {
+		t.Fatal("equal page timestamps lost the newer persisted details")
+	}
+}
+
 func TestActionPreventsAnotherClientsStalePageSave(t *testing.T) {
 	list := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch {

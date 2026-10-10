@@ -112,6 +112,14 @@ func (c *Cache) syncGeneration() error {
 		for _, page := range c.pages {
 			c.recordRepositories(page.Items)
 		}
+	} else {
+		for key, page := range data.Pages {
+			// Equal timestamps favor disk, which may contain newer details.
+			if local, ok := c.pages[key]; !ok || !local.CheckedAt.After(page.CheckedAt) {
+				c.pages[key] = page
+				c.recordRepositories(page.Items)
+			}
+		}
 	}
 	return nil
 }
@@ -200,6 +208,58 @@ func (c *Cache) PutIfCurrent(key string, page Page, generation uint64) {
 		c.pages[key] = page
 		c.recordRepositories(page.Items)
 	}
+}
+
+func (c *Cache) detailSnapshot() map[string]Thread {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	details := make(map[string]Thread)
+	for _, page := range c.pages {
+		for _, item := range page.Items {
+			if item.State != "" {
+				details[detailKey(item)] = item
+			}
+		}
+	}
+	return details
+}
+
+func (c *Cache) storeDetails(items []Thread, generation uint64) error {
+	details := make(map[string]Thread)
+	for _, item := range items {
+		if item.State != "" {
+			details[detailKey(item)] = item
+		}
+	}
+	if len(details) == 0 {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	lock, err := c.lockFile()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := c.syncGeneration(); err != nil {
+		return err
+	}
+	if c.generation != generation {
+		return nil
+	}
+	updated := false
+	for _, page := range c.pages {
+		for i, item := range page.Items {
+			if detail, ok := details[detailKey(item)]; ok {
+				page.Items[i].copyDetails(detail)
+				updated = true
+			}
+		}
+	}
+	if !updated {
+		return nil
+	}
+	return c.save(c.diskGeneration)
 }
 
 func (c *Cache) Save() error {

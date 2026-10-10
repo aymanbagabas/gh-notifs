@@ -89,6 +89,9 @@ Read and unread notifications appear by default.
 Use `--hostname` to select another GitHub host.
 
 The inbox shows notification reasons, read state, and issue or pull request details.
+Each row shows the available author as `@login` before the right-aligned reason and age.
+Author and reason columns fit the widest loaded values, with two-space separators and a fixed age column.
+Long author names are truncated; very narrow rows omit them. This uses existing details without extra API requests.
 Previews include Markdown, metadata, comments, submitted reviews, and inline review threads where available.
 The interface follows the terminal's light or dark theme. Use `--no-color` to disable colors.
 
@@ -139,9 +142,16 @@ A `+` means more results exist.
 
 The inbox fetches on startup and refreshes when you press `r`.
 Notification pages persist across launches in the system cache directory under `gh-notifs`.
+Cached pages include author names, author IDs, issue/PR states, and URLs.
+The inbox shows saved details immediately and retains them during refresh while the notification timestamp remains unchanged.
+Each session still fetches details in the background to update stale names and states.
+Author and state filters wait for detail validation rather than showing unverified cached matches.
+Notifications without saved details require their first detail fetch.
 Repository history merges observations from separate list and action processes.
 Actions also persist an account-specific invalidation generation with the cached pages.
 A later save from another process cannot restore pre-action pages.
+Detail writes use the same invalidation checks and update only matching entries that still exist.
+Saves merge newer persisted pages, so a late detail response cannot replace another process's newer notification refresh.
 An active inbox applies these invalidations on its next fetch.
 Notification pages and their invalidation generation share `inbox-v1.json`.
 Previews and conversations stay in memory.
@@ -186,7 +196,13 @@ Use `is:issue-or-pull-request` for both issues and pull requests.
 For example, `is:pr is:unread` selects unread pull requests, while `is:issue is:pr is:unread` selects both unread types.
 These filters act locally and intentionally differ from the website's [combined type behavior](https://docs.github.com/en/subscriptions-and-notifications/reference/inbox-filters#custom-filter-limitations).
 Author and state filters apply to issues and pull requests.
-`author:@me` checks your current account name, including after an account rename.
+Author filters match stable GitHub user IDs, not cached display names.
+`author:@me` reuses your authenticated account ID without another profile request.
+Each distinct author name requires one profile lookup per client session; subsequent fetches reuse that identity and cached issue/PR details.
+A resolved name continues to identify that account during the session, even after a rename.
+After restart, names resolve again; an old name may be unavailable or belong to another account.
+Unknown names and failed profile lookups produce an error.
+Cached display names can remain unchanged until the notification details refresh.
 `reason:participating` uses the REST parameter `participating=true`; it is not a notification reason value.
 Requests also use this optimization when every reason alternative is `author`, `comment`, `mention`, or `participating`.
 Specific reason filters still apply locally.

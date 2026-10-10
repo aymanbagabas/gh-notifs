@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"altscreen.io/vision/event"
 	"altscreen.io/vision/layout"
@@ -15,6 +16,51 @@ import (
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 	"github.com/aymanbagabas/gh-notifs/internal/theme"
 )
+
+func TestRefreshKeepsCachedAuthorsInProgress(t *testing.T) {
+	a := testApp()
+	cache, err := notifs.OpenCache(t.TempDir(), "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := a.result.Items[0]
+	item.Author, item.AuthorID, item.State = "oldname", "U_42", "open"
+	cache.Put(notifs.Endpoint(a.query, 1), notifs.Page{
+		Items: []notifs.Thread{item}, ETag: `"inbox"`, CheckedAt: time.Now(),
+	})
+	a.client.Cache = cache
+	a.client.BaseURL, a.client.GraphQL = "https://api.example/", "https://api.example/graphql"
+	a.client.HTTP = &http.Client{Transport: previewTestTransport(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/notifications":
+			return &http.Response{StatusCode: http.StatusNotModified, Body: io.NopCloser(strings.NewReader(""))}, nil
+		case "/graphql":
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(
+				`{"data":{"v0":{"issueOrPullRequest":{"state":"OPEN","author":{"id":"U_42","login":"newname"}}}}}`))}, nil
+		default:
+			return nil, errors.New("unexpected request: " + r.URL.Path)
+		}
+	})}
+	a.messages = make(chan message, 8)
+	a.result = a.client.Cached(a.query, a.options.PageSize)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		a.workers.Wait()
+	}()
+	a.fetch(ctx, false)
+	a.workers.Wait()
+	for _, name := range []string{"oldname", "newname"} {
+		msg := <-a.messages
+		if msg.err != nil || msg.final != (name == "newname") {
+			t.Fatalf("unexpected refresh message: %+v", msg)
+		}
+		a.receive(ctx, msg)
+		if current := a.current(); current == nil || current.Author != name || current.AuthorID != "U_42" {
+			t.Fatalf("refresh lost the displayed author: %+v", current)
+		}
+	}
+}
 
 func TestFailedNextPageKeepsUsableSelection(t *testing.T) {
 	a := testApp()

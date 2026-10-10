@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -71,6 +72,122 @@ func TestRowIconsMetadataAndHyperlinks(t *testing.T) {
 	}
 }
 
+func TestRowAuthorDetails(t *testing.T) {
+	for _, width := range []int{40, 60, 80, 120, 180} {
+		for _, light := range []bool{false, true} {
+			for _, noColor := range []bool{false, true} {
+				a := testApp()
+				a.light, a.options.NoColor = light, noColor
+				item := &a.result.Items[0]
+				item.Reason, item.State = "mention", "open"
+				item.UpdatedAt = time.Now().Add(-2 * time.Minute)
+				sc := screen.New(io.Discard, layout.Size{Width: width, Height: 32})
+				reasonColumn, authorEnd := -1, -1
+				for _, author := range []string{"", "octocat", "a-very-long-author-name", "机器人", ""} {
+					item.Author = author
+					a.paint(sc)
+					var row strings.Builder
+					for x := 0; x < width; x++ {
+						row.WriteString(sc.CellAt(layout.Pos(x, 7)).Content())
+					}
+					line := row.String()
+					if !strings.HasSuffix(line, "2m ago") {
+						t.Fatalf("width %d: author moved age: %q", width, line)
+					}
+					reason := strings.Index(line, "mention")
+					if reason >= 0 {
+						reason = sc.StringWidth(line[:reason])
+					}
+					if author == "" {
+						reasonColumn = reason
+						if strings.Contains(line, "@") {
+							t.Fatalf("missing author left a placeholder: %q", line)
+						}
+					} else if width >= 60 {
+						if !strings.Contains(line, "@") || reason < 0 {
+							t.Fatalf("width %d: missing author or reason: %q", width, line)
+						}
+						if author == "a-very-long-author-name" && width <= 80 && !strings.Contains(line, "…") {
+							t.Fatalf("long author was not truncated: %q", line)
+						}
+						end := -1
+						for x := 0; x < width; x++ {
+							if sc.CellAt(layout.Pos(x, 7)).Content() == "@" {
+								for ; x < width && sc.CellAt(layout.Pos(x, 7)).Content() != " "; x++ {
+									cell := sc.CellAt(layout.Pos(x, 7))
+									end = x
+									if cell.Style.HasLink() || (!noColor && (cell.Style.GetForeground() != theme.Colors(light).Muted ||
+										cell.Style.GetBackground() != theme.Colors(light).Selection)) {
+										t.Fatal("author lost metadata styling or inherited a reference hyperlink")
+									}
+								}
+								break
+							}
+						}
+						if authorEnd >= 0 && end != authorEnd {
+							t.Fatalf("author right edge shifted from %d to %d", authorEnd, end)
+						}
+						authorEnd = end
+					}
+					if reason != reasonColumn {
+						t.Fatalf("width %d: author shifted the reason: %q", width, line)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestMetadataGapsDoNotGrowWithTerminalWidth(t *testing.T) {
+	for _, width := range []int{120, 180, 240} {
+		a := testApp()
+		a.result.Items[0].Author = "octocat"
+		a.result.Items[0].Reason = "mention"
+		a.result.Items[0].UpdatedAt = time.Now().Add(-2 * time.Minute)
+		a.result.Items[1].Author = "a-very-long-author-name"
+		a.result.Items[1].Reason = "review_requested"
+		a.result.Items[1].UpdatedAt = time.Time{}
+		sc := screen.New(io.Discard, layout.Size{Width: width, Height: 32})
+		a.paint(sc)
+		for i, want := range []string{
+			"@octocat           mention       2m ago",
+			"@a-very-long-author-name  review-requested  106751d ago",
+		} {
+			var row strings.Builder
+			for x := 0; x < width; x++ {
+				row.WriteString(sc.CellAt(layout.Pos(x, 7+i*2)).Content())
+			}
+			line := row.String()
+			if at := strings.Index(line, "@"); at < 0 || line[at:] != want {
+				t.Fatalf("width %d: want compact metadata %q, got %q", width, want, line)
+			}
+		}
+	}
+}
+
+func Example_notificationAuthors() {
+	a := testApp()
+	a.result.Items[0].Author = "octocat"
+	a.result.Items[0].Reason = "review_requested"
+	a.result.Items[0].State = "open"
+	a.result.Items[0].UpdatedAt = time.Now().Add(-2 * time.Minute)
+	a.result.Items[1].Author = "mona"
+	a.result.Items[1].Reason = "mention"
+	a.result.Items[1].UpdatedAt = time.Now().Add(-time.Hour)
+	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 32})
+	a.paint(sc)
+	for _, y := range []int{7, 9} {
+		var row strings.Builder
+		for x := 81; x < 120; x++ {
+			row.WriteString(sc.CellAt(layout.Pos(x, y)).Content())
+		}
+		fmt.Println(row.String())
+	}
+	// Output:
+	// @octocat  review-requested       2m ago
+	//    @mona           mention       1h ago
+}
+
 func TestSelectionMarkAndUnsafeLink(t *testing.T) {
 	a := testApp()
 	a.selected["1"] = true
@@ -128,7 +245,7 @@ func TestMetadataColumnsStayAligned(t *testing.T) {
 			a.result.Items[0].UpdatedAt = time.Now().Add(-elapsed)
 			a.result.Items[0].Reason = "mention"
 			a.paint(sc)
-			for x := width - 14; x < width-11; x++ {
+			for x := width - 13; x < width-11; x++ {
 				if sc.CellAt(layout.Pos(x, 7)).Content() != " " {
 					t.Fatal("reason and age must have a plain space separator")
 				}

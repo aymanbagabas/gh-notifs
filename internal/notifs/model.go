@@ -22,7 +22,12 @@ type Thread struct {
 	URL        string    `json:"url"`
 	Number     int       `json:"number,omitempty"`
 	Author     string    `json:"author,omitempty"`
+	AuthorID   string    `json:"author_id,omitempty"`
 	State      string    `json:"state,omitempty"`
+}
+
+func (t *Thread) copyDetails(detail Thread) {
+	t.Author, t.AuthorID, t.State, t.URL = detail.Author, detail.AuthorID, detail.State, detail.URL
 }
 
 func (t Thread) Reference() string {

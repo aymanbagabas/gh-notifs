@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 func TestAuthorMeAfterAccountRename(t *testing.T) {
 	var renamed atomic.Bool
 	var identityCalls atomic.Int32
+	var graphCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		login := "oldname"
 		if renamed.Load() {
@@ -25,11 +27,12 @@ func TestAuthorMeAfterAccountRename(t *testing.T) {
 		switch r.URL.Path {
 		case "/user":
 			identityCalls.Add(1)
-			fmt.Fprintf(w, `{"id":42,"login":%q}`, login)
+			fmt.Fprintf(w, `{"id":42,"node_id":"U_42","login":%q}`, login)
 		case "/notifications":
 			fmt.Fprintf(w, "[%s]", threadJSON("1", "PullRequest", "mention"))
 		case "/graphql":
-			fmt.Fprintf(w, `{"data":{"v0":{"issueOrPullRequest":{"state":"OPEN","author":{"login":%q},"url":"https://github.com/acme/app/pull/7"}}}}`, login)
+			graphCalls.Add(1)
+			fmt.Fprintf(w, `{"data":{"v0":{"issueOrPullRequest":{"state":"OPEN","author":{"id":"U_42","login":%q},"url":"https://github.com/acme/app/pull/7"}}}}`, login)
 		default:
 			t.Errorf("unexpected endpoint: %s", r.URL)
 			http.NotFound(w, r)
@@ -54,22 +57,98 @@ func TestAuthorMeAfterAccountRename(t *testing.T) {
 		client *Client
 	}{{"same process", client}, {"restart", newClient()}} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "restart" {
+				if err := tc.client.Initialize(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				cached := tc.client.Cached(Query{}, 10)
+				if len(cached.Items) != 1 || cached.Items[0].Author != "oldname" || cached.Items[0].AuthorID != "U_42" {
+					t.Fatalf("restart lost the saved display identity: %+v", cached)
+				}
+			}
 			result, err := tc.client.Fetch(context.Background(), query, 10, nil)
-			if err != nil || len(result.Items) != 1 || result.Items[0].Author != "newname" {
+			if err != nil || len(result.Items) != 1 || result.Items[0].AuthorID != "U_42" {
 				t.Fatalf("after rename: %+v, %v", result, err)
 			}
 		})
 	}
-	if identityCalls.Load() < 2 {
-		t.Fatal("current account was never checked after the rename")
+	if identityCalls.Load() != 1 || graphCalls.Load() != 2 {
+		t.Fatalf("stable identity caused redundant requests: user=%d graphql=%d", identityCalls.Load(), graphCalls.Load())
 	}
 	b, err := os.ReadFile(client.identityPath())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var saved identity
-	if err := json.Unmarshal(b, &saved); err != nil || saved.ID != 42 {
+	if err := json.Unmarshal(b, &saved); err != nil || saved.ID != 42 || saved.NodeID != "U_42" {
 		t.Fatalf("account identity changed: %+v, %v", saved, err)
+	}
+}
+
+func TestLiteralAuthorAfterAccountRename(t *testing.T) {
+	var renamed atomic.Bool
+	var graphCalls atomic.Int32
+	var authorCalls atomic.Int32
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/notifications":
+			if r.Header.Get("If-None-Match") != "" {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Header().Set("ETag", `"unchanged"`)
+			fmt.Fprintf(w, "[%s]", threadJSON("1", "PullRequest", "mention"))
+		case "/graphql":
+			graphCalls.Add(1)
+			login := "oldname"
+			if renamed.Load() {
+				login = "newname"
+			}
+			fmt.Fprintf(w, `{"data":{"v0":{"issueOrPullRequest":{"state":"OPEN","author":{"id":"U_42","login":%q},"url":"https://github.com/acme/app/pull/7"}}}}`, login)
+		case "/users/oldname", "/users/newname":
+			authorCalls.Add(1)
+			fmt.Fprint(w, `{"node_id":"U_42"}`)
+		default:
+			t.Errorf("unexpected endpoint: %s", r.URL)
+			http.NotFound(w, r)
+		}
+	})
+	ctx := context.Background()
+	for _, tc := range []struct {
+		query string
+		count int
+	}{
+		{"author:oldname", 1},
+		{"author:newname", 1},
+		{"author:oldname", 1},
+		{"author:oldname author:newname state:open", 1},
+	} {
+		query, err := ParseQuery(tc.query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		original, _ := ParseQuery(tc.query)
+		result, err := client.Fetch(ctx, query, 10, nil)
+		if err != nil || len(result.Items) != tc.count {
+			t.Fatalf("%s: got %+v, %v; want %d items", tc.query, result, err, tc.count)
+		}
+		before := graphCalls.Load()
+		if err := client.Enrich(ctx, result.Items); err != nil {
+			t.Fatal(err)
+		}
+		if graphCalls.Load() != before {
+			t.Fatal("display enrichment did not reuse the refreshed author details")
+		}
+		if !reflect.DeepEqual(query, original) {
+			t.Fatal("author resolution mutated the caller's query")
+		}
+		if len(result.Items) != 0 && result.Items[0].AuthorID != "U_42" {
+			t.Fatal("author identity was not preserved in cached details")
+		}
+		renamed.Store(true)
+	}
+	if graphCalls.Load() != 1 || authorCalls.Load() != 2 {
+		t.Fatalf("expected one detail fetch and one lookup per name: graphql=%d users=%d", graphCalls.Load(), authorCalls.Load())
 	}
 }
 
@@ -84,7 +163,7 @@ func TestIdentityIsResolvedOncePerCredential(t *testing.T) {
 		if r.Header.Get("Authorization") == "Bearer other" {
 			id = 99
 		}
-		fmt.Fprintf(w, `{"id":%d,"login":"octocat"}`, id)
+		fmt.Fprintf(w, `{"id":%d,"node_id":"U_%d","login":"octocat"}`, id, id)
 	}))
 	defer server.Close()
 	root := t.TempDir()
@@ -134,8 +213,9 @@ func TestIdentityIsResolvedOncePerCredential(t *testing.T) {
 	if err != nil || strings.Contains(string(b), "first") {
 		t.Fatalf("identity mapping contains credential data or cannot be read: %v", err)
 	}
-	if login, err := same.Login(context.Background()); err != nil || login != "octocat" || calls.Load() != 4 {
-		t.Fatal("login did not check the current account name")
+	query, _ := ParseQuery("author:@me")
+	if authors, err := same.resolveAuthors(context.Background(), query); err != nil || authors["@me"] != "U_42" || calls.Load() != 3 {
+		t.Fatal("author:@me did not reuse the stable account identity")
 	}
 }
 
@@ -169,30 +249,75 @@ func TestUnverifiedIdentityDoesNotOpenCache(t *testing.T) {
 	}
 }
 
-func TestLoginDoesNotFallBackToCachedName(t *testing.T) {
+func TestAuthorResolutionIsConcurrentAndSessionScoped(t *testing.T) {
+	var calls atomic.Int32
+	var reassigned atomic.Bool
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/users/someone" {
+			t.Errorf("unexpected author lookup: %s", r.URL)
+		}
+		calls.Add(1)
+		id := "U_original"
+		if reassigned.Load() {
+			id = "U_new_owner"
+		}
+		fmt.Fprintf(w, `{"node_id":%q}`, id)
+	})
+	query, _ := ParseQuery("author:Someone author:SOMEONE")
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			ids, err := client.resolveAuthors(context.Background(), query)
+			if err != nil || ids["someone"] != "U_original" {
+				t.Errorf("resolve: %v, %v", ids, err)
+				return
+			}
+			ids["someone"] = "caller-change"
+		})
+	}
+	wg.Wait()
+	reassigned.Store(true)
+	ids, err := client.resolveAuthors(context.Background(), query)
+	if err != nil || ids["someone"] != "U_original" || calls.Load() != 1 {
+		t.Fatalf("session did not retain its author identity: %v, %v, calls=%d", ids, err, calls.Load())
+	}
+	restarted := &Client{HTTP: client.HTTP, BaseURL: client.BaseURL}
+	ids, err = restarted.resolveAuthors(context.Background(), query)
+	if err != nil || ids["someone"] != "U_new_owner" || calls.Load() != 2 {
+		t.Fatalf("new client reused a stale name binding: %v, %v, calls=%d", ids, err, calls.Load())
+	}
+}
+
+func TestAuthorLookupErrorsAreNotCached(t *testing.T) {
 	for _, response := range []struct {
 		name, body string
 		status     int
 	}{
-		{"missing login", `{}`, http.StatusOK},
+		{"missing node ID", `{}`, http.StatusOK},
 		{"invalid JSON", `{broken`, http.StatusOK},
 		{"unauthorized", `{"message":"Bad credentials"}`, http.StatusUnauthorized},
+		{"unknown author", `{"message":"Not Found"}`, http.StatusNotFound},
 	} {
 		t.Run(response.name, func(t *testing.T) {
+			var calls atomic.Int32
 			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/user" {
+				calls.Add(1)
+				if r.URL.Path != "/users/someone" {
 					t.Errorf("unexpected endpoint: %s", r.URL)
 				}
+
 				w.WriteHeader(response.status)
 				fmt.Fprint(w, response.body)
 			})
-			client.login = "oldname"
 			cache := client.Cache
-			if login, err := client.Login(context.Background()); err == nil || login != "" {
-				t.Fatalf("identity error used a cached name: %q, %v", login, err)
+			query, _ := ParseQuery("author:someone")
+			for range 2 {
+				if authors, err := client.resolveAuthors(context.Background(), query); err == nil || authors != nil {
+					t.Fatalf("identity error was hidden: %v, %v", authors, err)
+				}
 			}
-			if client.Cache != cache || client.login != "oldname" {
-				t.Fatal("failed identity lookup changed the account cache or login")
+			if client.Cache != cache || len(client.authors) != 0 || calls.Load() != 2 {
+				t.Fatal("failed identity lookup changed the account cache or cached a failure")
 			}
 		})
 	}

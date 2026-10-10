@@ -288,6 +288,25 @@ func (a *app) paint(sc *screen.Screen) {
 	if a.cursor-start >= a.scroll+capacity {
 		a.scroll = a.cursor - start - capacity + 1
 	}
+	detailX := left + 9
+	detailWidth := w - detailX
+	const ageWidth, metadataGap = 11, 2
+	authorWidth, reasonWidth := 0, 0
+	for _, item := range a.result.Items {
+		if item.Author != "" {
+			authorWidth = max(authorWidth, sc.StringWidth("@"+notifs.Plain(item.Author)))
+		}
+		reasonWidth = max(reasonWidth, sc.StringWidth(notifs.ReasonName(item.Reason)))
+	}
+	reasonWidth = min(reasonWidth, max(0, detailWidth/2-ageWidth-metadataGap))
+	ageX := w - ageWidth
+	reasonX := ageX - metadataGap - reasonWidth
+	referenceEnd := reasonX - metadataGap
+	authorWidth = min(authorWidth, max(0, referenceEnd-detailX-14))
+	authorX := referenceEnd - authorWidth
+	if authorWidth > 0 {
+		referenceEnd = authorX - metadataGap
+	}
 	for i := start + a.scroll; i < end && i-start-a.scroll < capacity; i++ {
 		item := a.result.Items[i]
 		y := 6 + (i-start-a.scroll)*2
@@ -351,19 +370,17 @@ func (a *app) paint(sc *screen.Screen) {
 		}
 		put(left+9, y, w-left-9, item.Title, titleStyle)
 
-		detailX := left + 9
-		detailWidth := w - detailX
-		const ageWidth = 11
-		ageX := w - ageWidth
 		ageText := age(item.UpdatedAt)
 		put(ageX, y+1, ageWidth, strings.Repeat(" ", max(0, ageWidth-sc.StringWidth(ageText)))+ageText, metaStyle)
-		reasonWidth := max(0, detailWidth/2-ageWidth-3)
-		reasonX := ageX - 3 - reasonWidth
 		if reason := notifs.ReasonName(item.Reason); reason != "" && reasonWidth > 0 {
 			reason = ansi.TruncateMode(reason, reasonWidth, "…", sc.WidthMethod(), sc.AmbiguousWide())
 			put(reasonX, y+1, reasonWidth, strings.Repeat(" ", max(0, reasonWidth-sc.StringWidth(reason)))+reason, metaStyle)
 		}
-		referenceWidth := max(0, reasonX-detailX-2)
+		referenceWidth := max(0, referenceEnd-detailX)
+		if item.Author != "" && authorWidth > 0 {
+			author := ansi.TruncateMode("@"+notifs.Plain(item.Author), authorWidth, "…", sc.WidthMethod(), sc.AmbiguousWide())
+			put(authorX, y+1, authorWidth, strings.Repeat(" ", max(0, authorWidth-sc.StringWidth(author)))+author, metaStyle)
+		}
 		suffix := ""
 		if item.State != "" && referenceWidth >= sc.StringWidth(item.State)+7 {
 			suffix = " · " + item.State

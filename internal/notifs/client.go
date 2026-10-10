@@ -31,7 +31,9 @@ type Client struct {
 	cacheRoot    string
 	identityKey  string
 	mu           sync.Mutex
-	login        string
+	accountID    string
+	authorMu     sync.Mutex
+	authors      map[string]string
 	blockedUntil time.Time
 	details      map[string]Thread
 }
@@ -135,32 +137,6 @@ func (c *Client) request(ctx context.Context, method, endpoint string, body io.R
 	return nil, api.HandleHTTPError(resp)
 }
 
-func (c *Client) Login(ctx context.Context) (string, error) {
-	if err := c.Initialize(ctx); err != nil {
-		return "", err
-	}
-	resp, err := c.request(ctx, http.MethodGet, "user", nil, nil)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	var user struct{ Login string }
-	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		return "", err
-	}
-	if user.Login == "" {
-		return "", fmt.Errorf("GitHub returned no login for the authenticated user")
-	}
-	c.mu.Lock()
-	if c.login != "" && c.login != user.Login {
-		// A rename changes author logins without changing notification timestamps.
-		clear(c.details)
-	}
-	c.login = user.Login
-	c.mu.Unlock()
-	return user.Login, nil
-}
-
 // Endpoint builds one request. Split a user query with Query.Requests first.
 func Endpoint(q Query, page int) string {
 	path := "notifications"
@@ -198,7 +174,7 @@ func Endpoint(q Query, page int) string {
 	return path + "?" + values.Encode()
 }
 
-func (c *Client) page(ctx context.Context, endpoint string) (Page, error) {
+func (c *Client) page(ctx context.Context, endpoint string, details map[string]Thread) (Page, error) {
 	generation := c.Cache.Generation()
 	cached, ok := c.Cache.Get(endpoint)
 	headers := make(http.Header)
@@ -218,6 +194,11 @@ func (c *Client) page(ctx context.Context, endpoint string) (Page, error) {
 	if resp.StatusCode == http.StatusNotModified {
 		if !ok {
 			return Page{}, fmt.Errorf("GitHub returned 304 without a cached page")
+		}
+		for i := range cached.Items {
+			if detail, ok := details[detailKey(cached.Items[i])]; ok {
+				cached.Items[i].copyDetails(detail)
+			}
 		}
 		cached.CheckedAt = time.Now()
 		c.Cache.PutIfCurrent(endpoint, cached, generation)
@@ -261,6 +242,9 @@ func (c *Client) page(ctx context.Context, endpoint string) (Page, error) {
 				}
 				item.URL = fmt.Sprintf("https://%s/%s/%s/%d", c.Host, item.Repository, kind, item.Number)
 			}
+		}
+		if detail, ok := details[detailKey(item)]; ok {
+			item.copyDetails(detail)
 		}
 		p.Items = append(p.Items, item)
 	}
@@ -331,20 +315,20 @@ func (c *Client) Fetch(ctx context.Context, q Query, limit int, progress func(Re
 	if err := c.Cache.refresh(); err != nil {
 		return result, fmt.Errorf("refresh metadata cache: %w", err)
 	}
+	details := c.Cache.detailSnapshot()
+	c.mu.Lock()
+	for key, detail := range c.details {
+		details[key] = detail
+	}
+	c.mu.Unlock()
 	defer func() {
 		if saveErr := c.Cache.Save(); saveErr != nil {
 			err = errors.Join(err, fmt.Errorf("save metadata cache: %w", saveErr))
 		}
 	}()
-	login := ""
-	for _, term := range q.Terms {
-		if term.Field == "author" && strings.EqualFold(term.Value, "@me") {
-			login, err = c.Login(ctx)
-			if err != nil {
-				return result, err
-			}
-			break
-		}
+	q.authorIDs, err = c.resolveAuthors(ctx, q)
+	if err != nil {
+		return result, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -366,7 +350,7 @@ func (c *Client) Fetch(ctx context.Context, q Query, limit int, progress func(Re
 	var wg sync.WaitGroup
 	for i, request := range requests {
 		wg.Go(func() {
-			r, err := c.fetchRequest(ctx, request, login, limit, func(r Result) { update(i, r) })
+			r, err := c.fetchRequest(ctx, request, limit, details, func(r Result) { update(i, r) })
 			if err != nil {
 				errs[i] = fmt.Errorf("%s: %w", Endpoint(request, 1), err)
 				r.More = true
@@ -406,14 +390,14 @@ func mergeResults(results []Result, limit int) Result {
 	return merged
 }
 
-func (c *Client) fetchRequest(ctx context.Context, q Query, login string, limit int, progress func(Result)) (result Result, err error) {
+func (c *Client) fetchRequest(ctx context.Context, q Query, limit int, details map[string]Thread, progress func(Result)) (result Result, err error) {
 	seen := make(map[string]bool)
 	participating := q.participatingOnly()
 	for n := 1; ; n++ {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		p, err := c.page(ctx, Endpoint(q, n))
+		p, err := c.page(ctx, Endpoint(q, n), details)
 		if err != nil {
 			return result, err
 		}
@@ -423,7 +407,7 @@ func (c *Client) fetchRequest(ctx context.Context, q Query, login string, limit 
 			}
 		}
 		for _, item := range p.Items {
-			if !seen[item.ID] && q.match(item, login, participating) {
+			if !seen[item.ID] && q.match(item, "", participating) {
 				seen[item.ID] = true
 				result.Items = append(result.Items, item)
 			}
@@ -452,6 +436,13 @@ func detailKey(t Thread) string {
 }
 
 func (c *Client) Enrich(ctx context.Context, items []Thread) error {
+	c.mu.Lock()
+	cache := c.Cache
+	c.mu.Unlock()
+	var generation uint64
+	if cache != nil {
+		generation = cache.Generation()
+	}
 	var missing []int
 	for i := range items {
 		if items[i].Number == 0 || (items[i].Type != "Issue" && items[i].Type != "PullRequest") {
@@ -461,7 +452,7 @@ func (c *Client) Enrich(ctx context.Context, items []Thread) error {
 		detail, ok := c.details[detailKey(items[i])]
 		c.mu.Unlock()
 		if ok {
-			items[i].Author, items[i].State, items[i].URL = detail.Author, detail.State, detail.URL
+			items[i].copyDetails(detail)
 		} else {
 			missing = append(missing, i)
 		}
@@ -500,6 +491,11 @@ send:
 	if err == nil {
 		err = ctx.Err()
 	}
+	if err == nil && cache != nil {
+		if saveErr := cache.storeDetails(items, generation); saveErr != nil {
+			err = fmt.Errorf("save notification details: %w", saveErr)
+		}
+	}
 	return err
 }
 
@@ -511,8 +507,8 @@ func (c *Client) enrichBatch(ctx context.Context, items []Thread, batch []int) e
 		declarations = append(declarations, fmt.Sprintf("$o%d:String!,$r%d:String!,$n%d:Int!", n, n, n))
 		vars[fmt.Sprintf("o%d", n)], vars[fmt.Sprintf("r%d", n)], vars[fmt.Sprintf("n%d", n)] = owner, repo, items[index].Number
 		fields = append(fields, fmt.Sprintf(`v%d:repository(owner:$o%d,name:$r%d){issueOrPullRequest(number:$n%d){
-... on Issue {state author{login} url}
-... on PullRequest {state isDraft author{login} url}
+... on Issue {state author{login ... on Node{id}} url}
+... on PullRequest {state isDraft author{login ... on Node{id}} url}
 }}`, n, n, n, n))
 	}
 	payload, err := json.Marshal(map[string]any{"query": "query(" + strings.Join(declarations, ",") + "){" + strings.Join(fields, "\n") + "}", "variables": vars})
@@ -530,7 +526,7 @@ func (c *Client) enrichBatch(ctx context.Context, items []Thread, batch []int) e
 				State   string
 				IsDraft bool
 				URL     string
-				Author  struct{ Login string }
+				Author  struct{ ID, Login string }
 			} `json:"issueOrPullRequest"`
 		}
 		Errors []struct{ Message string }
@@ -548,10 +544,14 @@ func (c *Client) enrichBatch(ctx context.Context, items []Thread, batch []int) e
 		}
 		d := repo.Item
 		items[index].Author, items[index].State, items[index].URL = d.Author.Login, strings.ToLower(d.State), d.URL
+		items[index].AuthorID = d.Author.ID
 		if d.IsDraft && d.State == "OPEN" {
 			items[index].State = "draft"
 		}
 		c.mu.Lock()
+		if c.details == nil {
+			c.details = make(map[string]Thread)
+		}
 		c.details[detailKey(items[index])] = items[index]
 		c.mu.Unlock()
 	}
