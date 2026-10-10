@@ -13,3 +13,6 @@ example:
 	go run ./examples/tsv
 	go run ./examples/theme
 	go run ./examples/theme --light
+	go run ./examples/preview
+	go run ./examples/discussion
+	go run ./examples/discussion --threads

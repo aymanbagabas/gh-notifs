@@ -488,6 +488,8 @@ func (c *Client) Preview(ctx context.Context, t Thread) (Preview, error) {
 		Body    string                   `json:"body"`
 		HTMLURL string                   `json:"html_url"`
 		Commit  struct{ Message string } `json:"commit"`
+		User    *previewActor            `json:"user"`
+		Author  *previewActor            `json:"author"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
 		return Preview{}, err
@@ -505,7 +507,19 @@ func (c *Client) Preview(ctx context.Context, t Thread) (Preview, error) {
 	if d.HTMLURL != "" {
 		web = d.HTMLURL
 	}
-	return Preview{Title: title, Body: body, URL: web}, nil
+	preview := Preview{Title: title, Body: body, URL: web}
+	if t.Number > 0 && (t.Type == "Issue" || t.Type == "PullRequest") {
+		t.URL = web
+		preview.Metadata, err = c.previewMetadata(ctx, t)
+		if err != nil {
+			return preview, fmt.Errorf("preview metadata incomplete: %w", err)
+		}
+	} else if d.User != nil {
+		preview.Metadata = []PreviewSection{{Name: "Author", Items: []string{actorName(d.User)}, Total: -1}}
+	} else if d.Author != nil {
+		preview.Metadata = []PreviewSection{{Name: "Author", Items: []string{actorName(d.Author)}, Total: -1}}
+	}
+	return preview, nil
 }
 
 func (c *Client) Action(ctx context.Context, id, action string) error {

@@ -90,7 +90,65 @@ type Result struct {
 }
 
 type Preview struct {
-	Title string
-	Body  string
+	Title    string
+	Body     string
+	URL      string
+	Metadata []PreviewSection
+}
+
+type PreviewSection struct {
+	Name  string
+	Items []string
+	Total int
 	URL   string
+}
+
+func (p Preview) Markdown() string {
+	escape := func(value string) string {
+		return strings.NewReplacer(`\`, `\\`, "`", "\\`", "*", `\*`, "_", `\_`,
+			"[", `\[`, "]", `\]`, "<", `\<`, ">", `\>`, "#", `\#`, "|", `\|`).Replace(Plain(value))
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "# %s\n\n", escape(p.Title))
+	for _, section := range p.Metadata {
+		fmt.Fprintf(&out, "**%s", escape(section.Name))
+		if section.Total >= 0 {
+			fmt.Fprintf(&out, " (%d)", section.Total)
+		}
+		out.WriteString(":** ")
+		if len(section.Items) == 0 {
+			if section.Total < 0 {
+				out.WriteString("Unavailable")
+			} else {
+				out.WriteString("None")
+			}
+		}
+		for i, item := range section.Items {
+			if i > 0 {
+				out.WriteString(", ")
+			}
+			out.WriteString(escape(item))
+		}
+		if section.Total > len(section.Items) {
+			fmt.Fprintf(&out, " — showing %d of %d", len(section.Items), section.Total)
+			if link := markdownLink("View all", section.URL); link != "" {
+				fmt.Fprintf(&out, " · %s", link)
+			}
+		}
+		out.WriteString("\n\n")
+	}
+	if len(p.Metadata) > 0 {
+		out.WriteString("---\n\n")
+	}
+	out.WriteString(p.Body)
+	return out.String()
+}
+
+func markdownLink(label, target string) string {
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || Plain(target) != target {
+		return ""
+	}
+	target = strings.NewReplacer("(", "%28", ")", "%29", "<", "%3C", ">", "%3E").Replace(u.String())
+	return fmt.Sprintf("[%s](%s)", label, target)
 }

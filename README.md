@@ -291,6 +291,30 @@ go run ./examples/theme --export themes
 
 The export command regenerates both shipped Glamour files from the shared palette.
 
+The preview example shows metadata above the body without an account or network:
+
+```sh
+go run ./examples/preview
+```
+
+The discussion examples show comments, review messages, and inline threads:
+
+```sh
+go run ./examples/discussion
+go run ./examples/discussion --threads
+go run ./examples/discussion --repo cli/cli --number 14640
+```
+
+For live results, use `--issue` for issue comments or `--threads` for inline review threads.
+If another page exists, the example prints the `--cursor` argument for it.
+
+Use an authenticated GitHub account to fetch live metadata:
+
+```sh
+go run ./examples/preview --repo cli/cli --number 14640
+go run ./examples/preview --repo cli/cli --number 14627 --issue
+```
+
 For a real inbox example, use a prepared public account:
 
 ```sh
