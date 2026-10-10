@@ -149,11 +149,43 @@ func (c *Cache) Save() error {
 			delete(c.pages, key)
 		}
 	}
-	historyErr := writeJSON(c.repositoryPath(), c.repositories)
+	historyErr := c.saveRepositories()
 	if historyErr != nil {
 		historyErr = fmt.Errorf("save repository history: %w", historyErr)
 	}
 	return errors.Join(historyErr, writeJSON(c.path, c.pages))
+}
+
+func (c *Cache) saveRepositories() error {
+	path := c.repositoryPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := lockCacheFile(lock); err != nil {
+		return err
+	}
+	// Separate list and action processes must merge history under the same lock.
+	b, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		var repositories map[string]time.Time
+		if err := json.Unmarshal(b, &repositories); err != nil {
+			return err
+		}
+		for name, updated := range repositories {
+			if previous, ok := c.repositories[name]; !ok || updated.After(previous) {
+				c.repositories[name] = updated
+			}
+		}
+	}
+	return writeJSON(path, c.repositories)
 }
 
 func writeJSON(path string, value any) error {
