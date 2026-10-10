@@ -139,12 +139,6 @@ func (c *Client) Login(ctx context.Context) (string, error) {
 	if err := c.Initialize(ctx); err != nil {
 		return "", err
 	}
-	c.mu.Lock()
-	login := c.login
-	c.mu.Unlock()
-	if login != "" {
-		return login, nil
-	}
 	resp, err := c.request(ctx, http.MethodGet, "user", nil, nil)
 	if err != nil {
 		return "", err
@@ -158,6 +152,10 @@ func (c *Client) Login(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("GitHub returned no login for the authenticated user")
 	}
 	c.mu.Lock()
+	if c.login != "" && c.login != user.Login {
+		// A rename changes author logins without changing notification timestamps.
+		clear(c.details)
+	}
 	c.login = user.Login
 	c.mu.Unlock()
 	return user.Login, nil

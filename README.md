@@ -182,6 +182,7 @@ Use `is:issue-or-pull-request` for both issues and pull requests.
 For example, `is:pr is:unread` selects unread pull requests, while `is:issue is:pr is:unread` selects both unread types.
 These filters act locally and intentionally differ from the website's [combined type behavior](https://docs.github.com/en/subscriptions-and-notifications/reference/inbox-filters#custom-filter-limitations).
 Author and state filters apply to issues and pull requests.
+`author:@me` checks your current account name, including after an account rename.
 `reason:participating` uses the REST parameter `participating=true`; it is not a notification reason value.
 Requests also use this optimization when every reason alternative is `author`, `comment`, `mention`, or `participating`.
 Specific reason filters still apply locally.
