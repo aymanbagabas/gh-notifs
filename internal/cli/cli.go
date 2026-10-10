@@ -27,18 +27,18 @@ Otherwise, fetch once and print TSV. The list command always prints TSV.
 Read and unread notifications are included by default.
 
 Options:
-  --query TEXT       Filter notifications; terms combine with AND
-  --repo OWNER/REPO  Scope to a repository (-R)
-  --org ORG          Scope to an organization
-  --global          Ignore the current repository
-  --hostname HOST   GitHub host; defaults to the gh configuration
-  --limit N         Results per page (default 50; alias -n)
-  --page N          List result page (default 1; list only)
-  --config PATH     Scope configuration file (interactive inbox only)
-  --no-color        Disable TUI color
-  --header          Include column names in TSV
-  --version         Print version
-  --help            Show help
+  -q,     --query TEXT       Filter notifications; terms combine with AND
+  -R,     --repo OWNER/REPO  Scope to a repository
+          --org ORG          Scope to an organization
+          --global           Ignore the current repository
+          --hostname HOST    GitHub host; defaults to the gh configuration
+  -n, -L, --limit N          Results per page (default 50)
+          --page N           List result page (default 1; list only)
+          --config PATH      Scope configuration file (interactive inbox only)
+          --no-color         Disable TUI color
+          --header           Include column names in TSV
+          --version          Print version
+  -h,     --help             Show help
 
 Query fields:
   repo:OWNER/REPO org:ORG reason:review-requested is:read is:unread
@@ -58,7 +58,8 @@ terminal controls inside values become spaces.
 Examples:
   gh notifs
   gh notifs --global --query 'reason:review-requested'
-  gh notifs list --query 'is:unread' --limit 10
+  gh notifs list -q 'is:unread' -n 10
+  gh notifs list -R cli/cli -L 10
   gh notifs list --org acme | cut -f9,11
   gh notifs list | cut -f12 | gh notifs open
 
@@ -86,6 +87,7 @@ func Run(ctx context.Context, args []string, version string) error {
 	var global, header, noColor, showVersion bool
 	var limit, page int
 	flags.StringVar(&queryText, "query", "", "notification query")
+	flags.StringVar(&queryText, "q", "", "notification query")
 	flags.StringVar(&repo, "repo", "", "repository scope")
 	flags.StringVar(&repo, "R", "", "repository scope")
 	flags.StringVar(&org, "org", "", "organization scope")
@@ -97,6 +99,7 @@ func Run(ctx context.Context, args []string, version string) error {
 	flags.BoolVar(&showVersion, "version", false, "show version")
 	flags.IntVar(&limit, "limit", 50, "result limit")
 	flags.IntVar(&limit, "n", 50, "result limit")
+	flags.IntVar(&limit, "L", 50, "result limit")
 	flags.IntVar(&page, "page", 1, "result page")
 	flags.Usage = func() { fmt.Fprint(flags.Output(), help) }
 	if err := flags.Parse(args); err != nil {

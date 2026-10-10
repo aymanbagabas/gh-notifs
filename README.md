@@ -57,7 +57,20 @@ gh notifs --global
 gh notifs --repo cli/cli
 gh notifs --org acme
 gh notifs --global --query 'is:unread reason:review-requested'
+gh notifs -R cli/cli -q 'is:unread' -n 10
 ```
+
+Short flags work with both the inbox and `list`:
+
+| Short flag | Long flag |
+| --- | --- |
+| `-q` | `--query` |
+| `-R` | `--repo` |
+| `-n`, `-L` | `--limit` |
+| `-h` | `--help` |
+
+`-R` and `-L` match GitHub CLI conventions. Here, `-q` filters notifications, not JSON through jq.
+Other options retain their long names to avoid conflicting shortcut meanings.
 
 Inside a GitHub repository, the default scope is that repository. Outside
 one, it includes all repositories. Both read and unread items appear by
