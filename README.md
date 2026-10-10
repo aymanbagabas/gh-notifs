@@ -1,515 +1,277 @@
 # gh-notifs
 
-A GitHub notification inbox for the terminal, built with
-[go-gh](https://github.com/cli/go-gh) and
-[Vision](https://altscreen.io/vision).
+A GitHub notification inbox for your terminal.
+Browse notifications, read conversations and reviews, and manage your inbox with the keyboard or mouse.
+Use the same program in scripts through tab-separated output.
 
-Run `gh notifs` for a full-screen inbox. Pipe the same command to get TSV
-instead. The program uses actual notification threads, not a search for
-unread issues.
+Built in Go with [go-gh](https://github.com/cli/go-gh) and [Vision](https://altscreen.io/vision).
+The project is unreleased.
 
-## Build and install
+## Get started
 
-You need Go 1.26.5 or later. Vision is currently private, so source builds
-require access to `altscreen/vision`. Published binaries do not need that
-source access.
+You need Go 1.26.5 or later, [GitHub CLI](https://cli.github.com/), and access to the private Vision repository.
 
 ```sh
 git clone https://github.com/aymanbagabas/gh-notifs
 cd gh-notifs
+gh auth login
 GOPRIVATE=altscreen.io/vision go mod download
 make build
+./bin/gh-notifs
+```
+
+If you already use `GOPRIVATE`, include Vision alongside your existing patterns.
+Skip `gh auth login` if your account is already configured.
+Configure Git credentials with read access to Vision before the build.
+Your credentials must permit access to notifications and the relevant repositories.
+
+To use `gh-notifs` from another directory, add the build directory to your shell's PATH:
+
+```sh
+export PATH="$PWD/bin:$PATH"
+```
+
+### Use as a GitHub CLI extension
+
+Build the executable in the repository root, then install the local extension:
+
+```sh
+go build -o gh-notifs .
 gh extension install .
 gh notifs
 ```
 
-Use your normal Git credentials for private dependencies. If you already
-set `GOPRIVATE`, add Vision to that list rather than replace it.
+On Windows, use `go build -o gh-notifs.exe .`.
+The examples below use `gh-notifs`; `gh notifs` accepts the same arguments.
+Both forms use GitHub CLI credentials, including supported environment variables such as `GH_TOKEN` and `GH_HOST`.
 
-You can also run `./bin/gh-notifs` as a standalone program. It uses the account
-and host configured by `gh`, or the authentication environment variables
-supported by go-gh, such as `GH_TOKEN` and `GH_HOST`. It does not need to
-start a `gh` process for API requests.
-
-The token must support the notifications API and have access to the
-repositories you use. Permission failures appear as errors.
-
-Once a binary release is published:
+## Browse your inbox
 
 ```sh
-gh extension install aymanbagabas/gh-notifs
-gh extension upgrade notifs
+gh-notifs
+gh-notifs --global
+gh-notifs -R cli/cli
+gh-notifs --org acme
+gh-notifs --global -q 'is:unread reason:review-requested' -L 10
 ```
 
-The Go rewrite replaces the Bash implementation. The root `gh-notifs` file
-is only a two-line launcher for local extension development. Released
-extensions run the compiled binary directly. On Windows, build with
-`go build -o gh-notifs.exe .` for local extension installation.
+Inside a GitHub repository, the inbox defaults to that repository.
+Use `--global` for all repositories, `-R` for one repository, or `--org` for an organization.
+Read and unread notifications appear by default.
+`-L` sets the page size; the default is 50.
+Use `--hostname` to select another GitHub host.
 
-The old flags, fzf
-interface, and eight-column output are not compatible with this version.
+The inbox shows notification reasons, read state, and issue or pull request details.
+Previews include Markdown, metadata, comments, submitted reviews, and inline review threads where available.
+The interface follows the terminal's light or dark theme. Use `--no-color` to disable colors.
 
-## Inbox
-
-```sh
-gh notifs
-gh notifs --global
-gh notifs --repo cli/cli
-gh notifs --org acme
-gh notifs --global --query 'is:unread reason:review-requested'
-gh notifs -R cli/cli -q 'is:unread' -n 10
-```
-
-Short flags work with both the inbox and `list`:
-
-| Short flag | Long flag |
-| --- | --- |
-| `-q` | `--query` |
-| `-R` | `--repo` |
-| `-n`, `-L` | `--limit` |
-| `-h` | `--help` |
-
-`-R` and `-L` match GitHub CLI conventions. Here, `-q` filters notifications, not JSON through jq.
-Other options retain their long names to avoid conflicting shortcut meanings.
-
-Inside a GitHub repository, the default scope is that repository. Outside
-one, it includes all repositories. Both read and unread items appear by
-default. An explicit query scope, `--repo`, `--org`, or `--global` overrides
-automatic repository scope. `GH_REPO` also sets the current repository.
-
-The interface has a query bar, views and scopes, a paginated list, and an
-optional Markdown preview. At narrow widths, Tab exposes the scope selector
-without the sidebar. The footer shows the last successful refresh, cached
-state and request errors.
-
-Notification items fill the list width. The current item has a two-line
-highlight. A blue `●` marks unread items. Hovering over a row reveals its
-`✓` selection control. The control turns blue under the pointer and green
-when selected. Selected rows retain the checkmark and a subtle tint after the pointer
-leaves. The keyboard cursor has a stronger highlight.
-Long labels and titles end with `…`.
-
-Type icons include `⇄` for pull requests, `⊙` for issues, `◇` for discussions,
-`◆` for releases, `●` for commits, and `✓` for checks. Only the type icon
-uses the state color: green for open, purple for merged, red for closed,
-and gray for draft or unknown states.
-The second line uses muted gray, with the reference and state on the left
-and the reason and update age on the right. The age has a fixed-width column,
-so changes such as `30m ago` to `1h ago` do not shift the reason column.
-References have OSC 8 hyperlinks; titles do not. Use your terminal's link
-gesture to open a reference; ordinary clicks still focus the item.
-
-All returned notification types remain in the list, including types with
-no public detail endpoint. Those items retain their notification metadata
-and can open the scoped GitHub inbox. Some types have only a basic preview.
-There is no separate activity feed.
-
-### Appearance and previews
-
-The inbox and Markdown previews share GitHub-like dark and light palettes.
-Markdown uses blue title bands, cyan headings and metadata labels, purple
-emphasis, shaded quotes and inline code, and full-color syntax.
-The app header, search field, and scope sidebar use the main background.
-The preview header retains its subtle background.
-An accent border identifies the active search field or sidebar.
-Repository names use cyan; owner groups and help headings use purple.
-Notification metadata stays muted, and type icons retain their state colors.
-The program queries the terminal's background color at startup.
-It enables light/dark reports with mode 2031 and queries the background
-again when the terminal reports a theme change. Mode 2033 reports visibility,
-not color changes. Terminals without color reports use the dark palette.
-Use `--no-color` to disable colors.
-
-The query editor uses the terminal cursor and scrolls long queries.
-Bracketed paste preserves UTF-8 characters across byte chunks.
-Previews use go-gh Markdown with Glamour. Rendered previews stay in memory
-until their content, width, or theme changes.
-
-Issue and pull request previews show metadata in a collapsible right sidebar: author,
-assignees, labels, participants, milestone, and linked closing issues or pull requests.
-Pull requests also show requested reviewers, review decisions, submitted reviews,
-branches, the merge author, checks, and deployments when available.
-Checks and deployments describe the latest pull request commit.
-Each list shows up to 20 entries, its total, and a browser link for additional entries.
-Metadata loads only for the selected preview, not for every inbox row.
-Preview requests wait until the selection stays unchanged for 200 milliseconds.
-Keyboard and mouse navigation cancel pending requests. Closing the preview
-cancels its pending or active request.
-If a metadata request fails, the body remains visible and the footer reports the error.
-Unavailable fields do not appear as empty lists. Other notification types retain
-their basic previews, with author details when the API supplies them.
-
-Press `m` or click **metadata** or **hide metadata** to hide or show the metadata sidebar.
-Drag its divider to change its width. The sidebar remembers its width
-until you exit. Narrow previews switch between **Body** and **metadata**.
-Click a pane, or use Alt+Left/Right, to choose where Ctrl+D/U scrolls.
-The wheel scrolls the pane beneath the pointer.
-Pane resizing and visibility changes do not send API requests.
-Details are grouped by topic, with empty sections omitted.
-
-The preview has three tabs: **Body** (`1`), **Discussion** (`2`), and **Threads** (`3`).
-Discussion shows issue or pull request comments and submitted review messages.
-Threads shows inline code-review conversations, file locations, diff context,
-and resolved or outdated status. Threads apply only to pull requests.
-Entries include authors, timestamps, Markdown, and links to GitHub.
-Use `,` and `.` or the clickable Previous/Next controls to change discussion pages.
-Each page contains up to 20 entries, in GitHub's returned order.
-Each inline thread shows up to 20 comments and links to the full thread when more exist.
-Discussion requests run only when you open their tab, with the same 200 ms
-debounce as the body preview. Loaded pages remain in memory for the current selection.
-Switching notifications cancels obsolete requests. Discussion errors stay in
-their pane; they do not replace the body or metadata.
-
-The `themes/` directory contains both palettes as Glamour JSON files.
-Other Glamour programs can use these files through their custom-style options.
-For programs that support it, set `GLAMOUR_STYLE` to the file's absolute path.
-This inbox always uses its shared palette rather than `GLAMOUR_STYLE`.
-
-### Keyboard shortcuts
+### Controls
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, arrows | Move |
-| `g` / `G`, Home / End | First / last item on the current page or focused sidebar |
-| `/` or `s` | Edit query; Enter applies; Escape cancels |
-| `Tab` | Switch between the list and scope selector |
-| `b` | Collapse or expand the sidebar |
-| `Space` | Collapse or expand the focused repository group |
-| `Enter` / `o` | Open the item in the browser; apply the selected sidebar view |
-| `v` | Toggle the preview |
-| `m` | Toggle preview details |
-| `1` / `2` / `3` | Preview body / discussion / inline review threads |
+| Up / Down, `k` / `j` | Move between items |
+| `/` | Edit the query |
+| `Ctrl+Space` | Show completions in the query editor |
+| `Tab` | Switch between the list and scopes |
+| `b` | Show or hide the sidebar |
+| `v` | Show or hide the preview |
+| `1` / `2` / `3` | Show Body / Discussion / Threads |
+| `m` | Show or hide preview metadata |
 | `,` / `.` | Previous / next discussion page |
-| Alt+Left / Alt+Right | Focus preview body / details |
-| `Ctrl+D` / `Ctrl+U` | Scroll the preview, or move through the list |
-| `x` / `Shift+A` | Select one item / all loaded items |
-| `Shift+X` | Clear all selections |
-| `Shift+I` | Mark selected items read |
-| `e` | Mark selected items done, after confirmation |
-| `Shift+M` | Unsubscribe, after confirmation |
-| `Shift+S` | Subscribe, after confirmation |
-| `[` / `]`, Page Up / Page Down | Previous / next result page |
-| `r` | Refresh immediately, unless a request is already active or GitHub has rate-limited requests |
-| `i` | Return to the initial query |
-| `?` | Show help |
-| `q`, `Ctrl+C` | Quit |
+| `[` / `]` | Previous / next notification page |
+| `Enter` / `o` | Open the current item in the browser |
+| `x` | Toggle selection |
+| `Shift+A` / `Shift+X` | Select all loaded items / clear all selections |
+| `Shift+I` | Mark items read |
+| `e` | Mark items done, after confirmation |
+| `Shift+M` / `Shift+S` | Unsubscribe / subscribe, after confirmation |
+| `r` | Refresh |
+| `?` | Show full help |
+| `q` / `Ctrl+C` | Quit |
 
-The read, done, and unsubscribe shortcuts match GitHub's documented inbox
-shortcuts. Other shortcuts are terminal conveniences. Moving the cursor or
-opening a preview does not mark a notification read. Opening its website
-page can change its read state on GitHub.
+Actions use the selected items, or the current item when nothing is selected.
+Mark read acts immediately.
+Escape cancels a query edit or closes help or a dialog; it does not quit.
+An empty search shows all filter names. Press Tab to insert the first filter, or use Up/Down to choose one.
+Enter applies an empty query until you select a suggestion.
+Ctrl+Space opens completions at the cursor, including filter names after a space and values after a filter's colon.
+For example, type `is:unread `, then press Ctrl+Space to choose another filter.
+Suggestions also appear as you type. Enter accepts a selected suggestion, or applies the query when none is selected.
 
-The page controls share the page-count row as `[ Previous` and `Next ]`.
-Available buttons have an accent background; unavailable buttons use a muted
-style. Page Up and Page Down also change pages.
-The header shows the total page count only when all matching results are loaded.
-Page navigation reuses loaded rows and fetches additional rows when needed.
-The `g` and `G` shortcuts stay within the current page; they do not fetch the entire inbox.
+Click a row to focus it or its checkmark to select it.
+Shift+click selects a range from the current item.
+Scroll the pane under the pointer, or drag a divider to resize it.
+Some terminals reserve Shift+click for text selection; use `x` instead.
 
-The bottom-right counter shows the highlighted item's position across all loaded pages, not the number of checked items.
-For example, press `j` from the first item to change `Item 1/50` to `Item 2/50`.
-A `+` after the count means more results are available. An empty list shows `Item 0/0`.
-The position shows `-` while the requested page has no loaded item.
+Previewing a notification does not mark it read.
+Opening its web page can change its read state on GitHub.
+The footer shows the cursor position, and the terminal title shows the loaded view's unread count.
+A `+` means more results exist.
 
-Help expands the footer upward and reduces the inbox height above it.
-Letter-based buttons underline their shortcut within the label instead of showing a separate key prefix.
-Existing shortcuts stay the same, including Shift for `I`, `M`, and `S`.
-The **checkbox** button toggles selection. **I read it** marks notifications read; **Mute** unsubscribes.
-For example, click **Sidebar** or press its underlined `b` to hide or show the sidebar.
-Number and punctuation shortcuts remain explicit. The help columns show full key combinations.
-Expanded help places search prompts and examples above the Navigate, Actions,
-and Search keybinding columns. Narrow terminals stack these columns.
-Click a shortcut with a single action to use it.
-The refresh status and action controls remain visible. Use Up/Down, Page
-Up/Down, or the mouse wheel over help to scroll its text.
-Press `?` or Escape, or click **Close help**, to restore the normal footer.
+The inbox fetches on startup and refreshes when you press `r`.
+Notification pages persist across launches in the system cache directory under `gh-notifs`.
+Previews and conversations stay in memory.
+Cached notifications can contain private repository information.
 
-### Mouse and search completion
+## Filter notifications
 
-Click either line of an item to focus it. Click its `✓` control to toggle
-multi-selection. Shift+click selects the range from the current item to the
-clicked item, including both endpoints. It keeps other selections.
-For example, click the first item, then Shift+click the fourth to select all four.
-Press Shift+X to clear all selections, including those on other loaded pages.
-Some terminals use Shift+click for text selection and do not send it to the app.
-In those terminals, use `x` or the `✓` controls instead.
-
-The footer controls support clicks, including Open,
-Preview, Refresh, and thread actions. Confirmation prompts have clickable
-Yes and No controls, with `Y` and `N` underlined. Action confirmations open as floating dialogs.
-Drag a dialog's title bar to move it. Click Yes, No, or the close
-button. Tab and Left/Right choose a button; Enter activates it.
-Yes, No, and the close button highlight under the pointer.
-No has the initial focus. `y` confirms; `n` or Escape cancels.
-The dialog blocks background interaction and keeps its original notification targets.
-Errors remain in the footer, and help remains in its expandable panel.
-
-Drag the sidebar divider to change its width. Click **Sidebar** to hide
-or show it. Repository entries use an accent color, with separate owner
-groups. Click a group's arrow to collapse it; click its name to filter by owner.
-The mouse wheel scrolls the list, sidebar, preview, or completion popup
-under the pointer.
-
-Click the query field to place the cursor. Type a field prefix, such as
-`rea` or `is:`, to see suggestions. Up/Down selects a suggestion; Tab,
-Enter, or a click inserts it. Enter applies the query when no suggestions
-remain. Escape cancels the edit.
-When suggestions extend beyond the popup, a right-edge scrollbar shows
-the visible range and its position.
-
-Completions include supported fields, types, reasons, states, and date
-examples. Repository, organization, and author suggestions come from loaded
-notifications. Completion does not issue API requests.
-
-The search field supports terminal-style text editing:
-
-| Keys | Action |
-| --- | --- |
-| Home / End, `Ctrl+A` / `Ctrl+E` | Move to the start / end |
-| Left / Right, `Ctrl+B` / `Ctrl+F` | Move one character |
-| `Alt+B` / `Alt+F`, `Ctrl+Left` / `Ctrl+Right`, `Alt+Left` / `Alt+Right` | Move by word |
-| Backspace / Delete, `Ctrl+H` / `Ctrl+D` | Delete the previous / next character |
-| `Ctrl+U` / `Ctrl+K` | Cut to the start / end |
-| `Ctrl+W` | Cut the previous whitespace-separated term |
-| `Alt+Backspace`, `Ctrl+Backspace` | Cut the previous word |
-| `Alt+D`, `Ctrl+Delete` | Cut the next word |
-| `Ctrl+Y` | Insert the last cut text |
-
-Word movement treats punctuation as a boundary. `Ctrl+W` can remove a
-complete term such as `repo:cli/cli`. Cut text stays in the application;
-it does not change the system clipboard. Alt shortcuts require the terminal
-to send Alt/Meta keys.
-
-### Configured scopes
-
-The interactive inbox creates `gh-notifs/config.yml` in the user configuration
-directory when the file does not exist. `XDG_CONFIG_HOME` takes precedence.
-Otherwise, the directory is `~/.config` on Linux, `~/Library/Application Support`
-on macOS, and `%AppData%` on Windows.
-
-The generated YAML includes instructions and the default scopes.
-Existing files are never overwritten. Invalid files produce an error.
-Restart the inbox after edits. List commands do not create or read this file.
-Use `--config PATH` to select a different file:
+Query terms combine with **AND**:
 
 ```sh
-gh notifs --config ./inbox.yml
+gh-notifs --global -q 'is:unread reason:mention'
+gh-notifs -R cli/cli -q 'is:pr state:open'
+gh-notifs --global -q 'author:@me since:2026-10-01'
+gh-notifs --global -q '"slow uploads"'
 ```
 
-Each scope replaces the complete current query, without an implicit
-repository or organization constraint. Entries appear in file order.
-Repository groups from loaded notifications appear below them.
+| Filter | Examples |
+| --- | --- |
+| Repository or owner | `repo:cli/cli`, `org:acme` |
+| Read state | `is:read`, `is:unread` |
+| Type | `is:issue`, `is:pr`, `is:discussion`, `is:release`, `is:commit` |
+| Notification reason | `reason:mention`, `reason:review-requested`, `reason:subscribed` |
+| Author | `author:octocat`, `author:@me` |
+| Issue or pull request state | `state:open`, `state:closed`, `state:merged`, `state:draft` |
+| Update time | `since:2026-10-01`, `before:2026-11-01` |
+| Title text | `"slow uploads"` |
+
+Author and state filters apply to issues and pull requests.
+Dates use notification update times and accept `YYYY-MM-DD` or RFC3339.
+Date-only values use midnight UTC; `since` and `before` exclude the boundary itself.
+Use `gh-notifs --help` for more query examples.
+
+## Use notifications in scripts
+
+`list` always prints TSV. The root command also prints TSV when input or output is not a terminal.
+
+```sh
+gh-notifs list -R cli/cli -L 10 --header
+gh-notifs list --global -q 'is:unread' | cut -f8,11
+gh-notifs list -R cli/cli --page 2 -L 20
+gh-notifs --global | cut -f12
+```
+
+Each row has these columns:
+
+| Column | Value |
+| --- | --- |
+| 1 | Notification thread ID |
+| 2 | Unread: `true` or `false` |
+| 3 | Updated time |
+| 4 | Last-read time |
+| 5 | Repository |
+| 6 | Subject type |
+| 7 | Notification reason |
+| 8 | Reference, such as `cli/cli#123` |
+| 9 | Issue or pull request state |
+| 10 | Author |
+| 11 | Title |
+| 12 | Browser URL |
+
+Times use UTC RFC3339. Missing values are empty.
+Output has no header unless you pass `--header`, and contains no terminal styling.
+Errors go to stderr with a nonzero exit status.
+
+### Perform actions
+
+**Warning: Check the targets before you run an action.**
+CLI actions change GitHub immediately, without confirmation.
+Use notification thread IDs from `list`, not issue or pull request numbers.
+Replace the example IDs with your own.
+
+```sh
+gh-notifs read 123456789 987654321
+gh-notifs done 123456789
+gh-notifs subscribe 123456789
+gh-notifs unsubscribe 123456789
+```
+
+Each action also accepts IDs or complete TSV rows on stdin.
+Do not include `--header` in action input.
+For example, save a list and inspect it before you mark those notifications read:
+
+```sh
+gh-notifs list -R cli/cli -q 'is:unread' -L 10 > selected.tsv
+cut -f1,8,11 selected.tsv
+gh-notifs read < selected.tsv
+```
+
+To mark a filtered batch as done:
+
+```sh
+gh-notifs list -R cli/cli -q 'is:read' -L 10 | gh-notifs done
+```
+
+Actions stop at the first error. Earlier successful changes remain applied.
+Use an action's `--help` for more examples.
+
+### Open in the browser
+
+`open` accepts HTTPS URLs or complete TSV rows:
+
+```sh
+gh-notifs open https://github.com/cli/cli/issues/1
+gh-notifs list -R cli/cli -L 1 | gh-notifs open
+```
+
+## Configure sidebar scopes
+
+The inbox creates `gh-notifs/config.yml` in your user configuration directory on its first launch.
+Use `$XDG_CONFIG_HOME` when set; otherwise, use `~/.config` on Linux, `~/Library/Application Support` on macOS, or `%AppData%` on Windows.
+You can select another file with `--config`:
+
+```sh
+gh-notifs --config ./inbox.yml
+```
 
 ```yaml
 scopes:
   - name: Inbox
     query: ""
   - name: My reviews
-    query: "reason:review-requested is:unread"
+    query: "is:unread reason:review-requested"
   - name: CLI issues
     query: "repo:cli/cli is:issue"
 ```
 
-Use `scopes: []` to show only repository groups.
-Run `go run ./examples/config` to print the documented defaults without
-creating a configuration file.
+Each scope replaces the complete query, including any repository filter.
+Restart the inbox after edits.
+Use `scopes: []` to hide configured scopes; repository groups remain available.
+Noninteractive commands do not read or create this file.
 
-### Queries
+## Shell completions
 
-Terms combine with **AND**. Quote title phrases that contain spaces.
-Queries are applied to notification threads, not to a separate search result.
-
-| Query | Meaning |
-| --- | --- |
-| `repo:OWNER/REPO` | Repository |
-| `org:OWNER` | Repository owner or organization |
-| `reason:review-requested` | Actual notification reason |
-| `is:read`, `is:unread` | Notification read state |
-| `is:pr`, `is:issue`, `is:issue-or-pull-request` | Issue or pull request type |
-| `is:discussion`, `is:release`, `is:commit`, `is:check-suite` | Other subject types |
-| `author:LOGIN`, `author:@me` | Issue or pull request author |
-| `state:open`, `state:closed`, `state:merged`, `state:draft` | Issue or pull request state |
-| `since:2026-10-01` | Notification updated strictly after midnight UTC |
-| `before:2026-11-01` | Notification updated strictly before midnight UTC |
-| `"slow uploads"` | Case-insensitive title substring |
-
-Dates also accept RFC3339 timestamps. Type filters additionally support
-`is:gist`, `is:repository-invitation`, `is:repository-advisory`, and
-`is:repository-vulnerability-alert`.
-
-Reason values come from REST, such as `mention`, `team-mention`, `assign`,
-`comment`, `author`, `manual`, `subscribed`, and `ci-activity`. Underscores
-and hyphens are equivalent in reason values. Type and reason filters match
-local lowercase, hyphen-separated names. The TUI displays those same names:
-`PullRequest` becomes `pull-request`, and `review_requested` becomes
-`review-requested`. TSV retains the original API values.
-
-Author and state filters need extra details and currently match only issues
-and pull requests. Unsupported fields produce errors. There is no OR or
-negation syntax.
-
-### Public API boundaries
-
-The program uses supported public APIs only.
-
-- Supported actions: mark read, mark done, subscribe, and unsubscribe.
-- Not supported: Saved, Done history, restore, and mark unread.
-- Website custom filters do not synchronize with this program.
-- Scopes mean repositories and organizations, not GitHub Projects.
-
-The tool does not simulate unsupported GitHub state in a local database.
-
-## TSV and scripts
-
-Without terminal input and output, the default command fetches once,
-prints TSV, and exits. `list` always prints TSV, even on a terminal.
-It fetches once and does not initialize Vision.
+Generate a completion script for your shell:
 
 ```sh
-gh notifs list --limit 10
-gh notifs list --query 'is:unread' --header
-gh notifs list --org acme --query 'reason:review-requested' | cut -f8,11
-gh notifs list --page 2 --limit 20
-gh notifs --global | cut -f12
+gh-notifs completion bash > gh-notifs.bash
+gh-notifs completion zsh > _gh-notifs
+gh-notifs completion fish > gh-notifs.fish
+gh-notifs completion powershell > gh-notifs.ps1
 ```
 
-The default page size is 50. Filtered pages can require multiple API pages.
-The UI labels the number of **loaded** results, not the total inbox size.
+Load the script through your shell's completion configuration.
+Bash requires `bash-completion`.
+The scripts complete commands, flags, and configuration paths for `gh-notifs`, not the `gh notifs` extension form.
 
-The fixed columns are:
+## API limits
 
-| Field | Value |
-| --- | --- |
-| 1 | Notification thread ID |
-| 2 | Unread: `true` or `false` |
-| 3 | Notification update time, UTC RFC3339 |
-| 4 | Last-read time, UTC RFC3339, or empty |
-| 5 | `owner/repository` |
-| 6 | GitHub subject type |
-| 7 | GitHub notification reason |
-| 8 | `owner/repository#number`, or the repository when no number is available |
-| 9 | Issue or PR state, or empty |
-| 10 | Issue or PR author, or empty |
-| 11 | Title |
-| 12 | Browser URL |
+REST provides notifications and read state. GraphQL adds issue and pull request details.
+Some notification types have only a basic preview.
+The supported API does not provide mark unread, saved items, or done history.
+Website filters do not synchronize with sidebar scopes.
 
-There is no header unless `--header` is set. Tabs, newlines, terminal
-controls, and Unicode format controls inside fields become spaces.
-Output contains no color codes or hyperlinks. Errors go to stderr with a
-nonzero exit status; failed list requests do not silently print cached data.
-
-Actions accept thread IDs or full TSV rows:
+## Development
 
 ```sh
-gh notifs read 123456789
-gh notifs done 123456789
-gh notifs unsubscribe 123456789
-gh notifs subscribe 123456789
+make build    # Build bin/gh-notifs
+make test     # Run tests with the race detector
+make check    # Run go vet
+make example  # Run offline examples
 ```
 
-These commands modify GitHub immediately. Unlike the TUI, they do not ask
-for confirmation. Use IDs returned by your own inbox.
-
-Open accepts HTTPS URLs or full TSV rows:
-
-```sh
-gh notifs list | cut -f12 | fzf | gh notifs open
-```
-
-## Requests, refresh, and cache
-
-REST supplies thread identity, read state, reason, and notification times.
-GraphQL adds issue and PR state and author data. It queries the exact
-subjects from the inbox rather than searching for potentially different items.
-
-The TUI displays REST rows before detail requests finish. Details use
-batches of at most 25 subjects and at most four concurrent requests.
-Unchanged details stay in memory. Previews load only when requested.
-Scope changes cancel obsolete work, and late results cannot replace the
-current view.
-
-The inbox fetches on startup. Press `r` to refresh it manually.
-Refresh uses conditional requests with ETag and Last-Modified. A `304`
-reuses the cached page. The program honors rate-limit backoff and avoids
-overlapping refreshes. It revalidates loaded pages rather than assuming
-a changed first page explains every older notification.
-
-The metadata cache is under the operating system's user cache directory,
-inside `gh-notifs/`. The host and numeric GitHub user ID separate inbox caches.
-Each unfamiliar token requires one `/user` lookup. A local mapping associates
-its fingerprint with the verified account. Later starts reuse that mapping
-without another identity request. Token rotation preserves the account's inbox cache.
-Identity requests run outside the UI loop. The token itself is never stored there.
-Files use owner-only permissions on Unix. Cached titles can contain private
-information. Preview bodies are not persisted.
-
-Successful refreshes replace page contents. Successful actions invalidate
-cached pages. Entries older than seven days are removed on cache writes.
-The UI can show cached rows during a refresh or a network failure, with the
-cached state and errors visible.
-
-## Development and examples
-
-```sh
-make test
-make check
-make example
-make build
-```
-
-`go run ./examples/tsv` prints a synthetic notification through the actual
-TSV formatter. It needs no account or network. API tests use local HTTP
-fixtures; renderer tests exercise Vision at multiple terminal sizes.
-
-The theme example also needs no account or network:
-
-```sh
-go run ./examples/theme
-go run ./examples/theme --light
-go run ./examples/theme --export themes
-```
-
-The export command regenerates both shipped Glamour files from the shared palette.
-
-The preview example shows metadata above the body without an account or network:
-
-```sh
-go run ./examples/preview
-```
-
-The discussion examples show comments, review messages, and inline threads:
-
-```sh
-go run ./examples/discussion
-go run ./examples/discussion --threads
-go run ./examples/discussion --repo cli/cli --number 14640
-```
-
-For live results, use `--issue` for issue comments or `--threads` for inline review threads.
-If another page exists, the example prints the `--cursor` argument for it.
-
-Use an authenticated GitHub account to fetch live metadata:
-
-```sh
-go run ./examples/preview --repo cli/cli --number 14640
-go run ./examples/preview --repo cli/cli --number 14627 --issue
-```
-
-For a real inbox example, use a prepared public account:
-
-```sh
-./gh-notifs --global --query 'is:unread'
-./gh-notifs list --global --limit 5 | cut -f8,11
-```
-
-The old Bash demo shim and its recording are removed. Record the current
-binary with public data; never publish a private inbox recording.
-
-CI and release builds require a `VISION_READ_TOKEN` Actions secret with
-read access to the private Vision repository. The workflow reports a
-dependency access failure instead of bypassing it. After Vision becomes
-public, this extra credential will no longer be necessary.
+The [examples](examples) cover TSV output, themes, configuration, previews, and discussions.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE).
