@@ -2,7 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,6 +15,47 @@ import (
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 	"github.com/aymanbagabas/gh-notifs/internal/theme"
 )
+
+func TestFailedNextPageKeepsUsableSelection(t *testing.T) {
+	a := testApp()
+	cache, err := notifs.OpenCache(t.TempDir(), "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("offline pagination failure")
+	a.client.Cache = cache
+	a.client.BaseURL = "https://api.example/"
+	a.client.HTTP = &http.Client{Transport: previewTestTransport(func(*http.Request) (*http.Response, error) {
+		return nil, failure
+	})}
+	a.messages = make(chan message, 8)
+	a.result.More = true
+	a.selected["1"] = true
+	previous := a.result
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		a.workers.Wait()
+	}()
+	for range 2 {
+		a.key(ctx, event.Key{Code: ']'})
+		if !a.loading || a.page != 1 || a.cursor != 2 {
+			t.Fatalf("next-page request did not start: page=%d cursor=%d loading=%t", a.page, a.cursor, a.loading)
+		}
+		a.workers.Wait()
+		msg := <-a.messages
+		if !msg.final || !errors.Is(msg.err, failure) {
+			t.Fatalf("unexpected fetch response: %+v", msg)
+		}
+		a.receive(ctx, msg)
+		if a.loading || a.page != 0 || a.current() == nil || a.cursor >= len(a.result.Items) {
+			t.Fatalf("failed pagination left an invalid selection: page=%d cursor=%d current=%+v", a.page, a.cursor, a.current())
+		}
+		if !reflect.DeepEqual(a.result, previous) || !a.selected["1"] || !errors.Is(a.err, failure) {
+			t.Fatal("failed pagination lost verified results, selection, or the error")
+		}
+	}
+}
 
 func TestHighlightedItemCounter(t *testing.T) {
 	for _, width := range []int{40, 120} {

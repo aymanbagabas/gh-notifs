@@ -316,6 +316,7 @@ func (a *app) receive(ctx context.Context, msg message) {
 		}
 	}
 	if msg.final {
+		a.clamp()
 		a.loading = false
 		if !a.edit || msg.err != nil {
 			a.err = msg.err
