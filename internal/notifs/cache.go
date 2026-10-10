@@ -22,11 +22,17 @@ type Page struct {
 }
 
 type Cache struct {
-	mu           sync.Mutex
-	path         string
-	pages        map[string]Page
-	repositories map[string]time.Time
-	generation   uint64
+	mu             sync.Mutex
+	path           string
+	pages          map[string]Page
+	repositories   map[string]time.Time
+	generation     uint64
+	diskGeneration uint64
+}
+
+type cacheData struct {
+	Generation uint64          `json:"generation"`
+	Pages      map[string]Page `json:"pages"`
 }
 
 func OpenCache(root, host, identity string) (*Cache, error) {
@@ -34,21 +40,19 @@ func OpenCache(root, host, identity string) (*Cache, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	c := &Cache{path: filepath.Join(dir, "inbox-v1.json"), pages: make(map[string]Page),
+	c := &Cache{path: filepath.Join(dir, "inbox-v2.json"), pages: make(map[string]Page),
 		repositories: make(map[string]time.Time)}
-	b, err := os.ReadFile(c.path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	lock, err := c.lockFile()
+	if err != nil {
 		return nil, err
 	}
-	if err == nil {
-		if err := json.Unmarshal(b, &c.pages); err != nil {
-			return nil, err
-		}
+	defer lock.Close()
+	data, err := c.readPages()
+	if err != nil {
+		return nil, err
 	}
-	if c.pages == nil {
-		c.pages = make(map[string]Page)
-	}
-	b, err = os.ReadFile(c.repositoryPath())
+	c.pages, c.diskGeneration = data.Pages, data.Generation
+	b, err := os.ReadFile(c.repositoryPath())
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -64,6 +68,68 @@ func OpenCache(root, host, identity string) (*Cache, error) {
 		c.recordRepositories(page.Items)
 	}
 	return c, nil
+}
+
+func (c *Cache) readPages() (cacheData, error) {
+	data := cacheData{Pages: make(map[string]Page)}
+	b, err := os.ReadFile(c.path)
+	if errors.Is(err, os.ErrNotExist) {
+		b, err = os.ReadFile(filepath.Join(filepath.Dir(c.path), "inbox-v1.json"))
+		if err == nil {
+			err = json.Unmarshal(b, &data.Pages)
+		}
+	} else if err == nil {
+		err = json.Unmarshal(b, &data)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		err = nil
+	}
+	if data.Pages == nil {
+		data.Pages = make(map[string]Page)
+	}
+	return data, err
+}
+
+func (c *Cache) lockFile() (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(c.path), 0700); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(c.repositoryPath()+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockCacheFile(lock); err != nil {
+		lock.Close()
+		return nil, err
+	}
+	return lock, nil
+}
+
+// The caller holds both the memory lock and the account's file lock.
+func (c *Cache) syncGeneration() error {
+	data, err := c.readPages()
+	if err != nil {
+		return err
+	}
+	if data.Generation != c.diskGeneration {
+		c.generation++
+		c.diskGeneration, c.pages = data.Generation, data.Pages
+		for _, page := range c.pages {
+			c.recordRepositories(page.Items)
+		}
+	}
+	return nil
+}
+
+func (c *Cache) refresh() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	lock, err := c.lockFile()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return c.syncGeneration()
 }
 
 type Repository struct {
@@ -144,6 +210,19 @@ func (c *Cache) PutIfCurrent(key string, page Page, generation uint64) {
 func (c *Cache) Save() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	lock, err := c.lockFile()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := c.syncGeneration(); err != nil {
+		return err
+	}
+	return c.save(c.diskGeneration)
+}
+
+// The generation and pages share one atomic write, so a crash cannot detach them.
+func (c *Cache) save(generation uint64) error {
 	for key, p := range c.pages {
 		if time.Since(p.CheckedAt) > 7*24*time.Hour {
 			delete(c.pages, key)
@@ -153,23 +232,16 @@ func (c *Cache) Save() error {
 	if historyErr != nil {
 		historyErr = fmt.Errorf("save repository history: %w", historyErr)
 	}
-	return errors.Join(historyErr, writeJSON(c.path, c.pages))
+	pageErr := writeJSON(c.path, cacheData{Generation: generation, Pages: c.pages})
+	if pageErr == nil {
+		c.diskGeneration = generation
+	}
+	return errors.Join(historyErr, pageErr)
 }
 
 func (c *Cache) saveRepositories() error {
 	path := c.repositoryPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	if err := lockCacheFile(lock); err != nil {
-		return err
-	}
-	// Separate list and action processes must merge history under the same lock.
+	// The account's file lock also protects this history merge.
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -213,8 +285,17 @@ func writeJSON(path string, value any) error {
 
 func (c *Cache) Invalidate() error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.generation++
 	c.pages = make(map[string]Page)
-	c.mu.Unlock()
-	return c.Save()
+	lock, err := c.lockFile()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	data, err := c.readPages()
+	if err != nil {
+		return err
+	}
+	return c.save(data.Generation + 1)
 }

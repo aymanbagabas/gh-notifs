@@ -140,6 +140,10 @@ A `+` means more results exist.
 The inbox fetches on startup and refreshes when you press `r`.
 Notification pages persist across launches in the system cache directory under `gh-notifs`.
 Repository history merges observations from separate list and action processes.
+Actions also persist an account-specific invalidation generation with the cached pages.
+A later save from another process cannot restore pre-action pages.
+An active inbox applies these invalidations on its next fetch.
+Existing notification caches migrate to `inbox-v2.json` on the next save.
 Previews and conversations stay in memory.
 Cached notifications can contain private repository information.
 

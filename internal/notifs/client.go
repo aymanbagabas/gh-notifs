@@ -323,6 +323,9 @@ func (c *Client) Fetch(ctx context.Context, q Query, limit int, progress func(Re
 	if err := c.Initialize(ctx); err != nil {
 		return result, err
 	}
+	if err := c.Cache.refresh(); err != nil {
+		return result, fmt.Errorf("refresh metadata cache: %w", err)
+	}
 	defer func() {
 		if saveErr := c.Cache.Save(); saveErr != nil {
 			err = errors.Join(err, fmt.Errorf("save metadata cache: %w", saveErr))

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -12,6 +13,267 @@ import (
 	"testing"
 	"time"
 )
+
+func TestActionPreventsAnotherClientsStalePageSave(t *testing.T) {
+	list := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			w.WriteHeader(http.StatusResetContent)
+			return
+		}
+		fmt.Fprintf(w, "[%s]", threadJSON("42", "Release", "subscribed"))
+	})
+	query, _ := ParseQuery("")
+	if _, err := list.Fetch(context.Background(), query, 10, nil); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(list.Cache.path)))
+	actionCache, err := OpenCache(root, "github.com", "test-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := &Client{HTTP: list.HTTP, BaseURL: list.BaseURL, Cache: actionCache}
+	if err := action.Action(context.Background(), "42", "read"); err != nil {
+		t.Fatal(err)
+	}
+	if err := list.Cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "test-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.Get(Endpoint(query, 1)); ok {
+		t.Fatal("the other client restored an invalidated notification page")
+	}
+	if _, ok := list.Cache.Get(Endpoint(query, 1)); ok {
+		t.Fatal("the other client retained the invalidated page in memory")
+	}
+	if got := reopened.RecentRepositories(); len(got) != 1 || got[0].Name != "acme/app" {
+		t.Fatalf("invalidation lost repository history: %+v", got)
+	}
+}
+
+func TestStaleCacheSavePreservesPostActionPages(t *testing.T) {
+	root := t.TempDir()
+	stale, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.Put("old", Page{Items: []Thread{{Repository: "acme/old"}}, CheckedAt: time.Now()})
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	current, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Invalidate(); err != nil {
+		t.Fatal(err)
+	}
+	current.Put("new", Page{Items: []Thread{{Repository: "acme/new"}}, CheckedAt: time.Now()})
+	if err := current.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.Get("old"); ok {
+		t.Fatal("stale writer restored the old page")
+	}
+	if _, ok := reopened.Get("new"); !ok {
+		t.Fatal("stale writer erased the post-action page")
+	}
+	if got := reopened.RecentRepositories(); len(got) != 2 {
+		t.Fatalf("stale writer lost repository history: %+v", got)
+	}
+}
+
+func TestCacheCrossProcessInvalidation(t *testing.T) {
+	const rootVariable = "GH_NOTIFS_TEST_CACHE_ROOT"
+	if root := os.Getenv(rootVariable); root != "" {
+		cache, err := OpenCache(root, "github.com", "account")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.Invalidate(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	root := t.TempDir()
+	cache, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.Put("old", Page{Items: []Thread{{Repository: "acme/app"}}, CheckedAt: time.Now()})
+	if err := cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestCacheCrossProcessInvalidation$")
+	command.Env = append(os.Environ(), rootVariable+"="+root)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("child invalidation: %v\n%s", err, output)
+	}
+	if err := cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.Get("old"); ok {
+		t.Fatal("parent process restored the invalidated page")
+	}
+	if got := reopened.RecentRepositories(); len(got) != 1 || got[0].Name != "acme/app" {
+		t.Fatalf("cross-process invalidation lost history: %+v", got)
+	}
+}
+
+func TestLegacyPagesStayInvalidated(t *testing.T) {
+	root := t.TempDir()
+	cache, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(filepath.Dir(cache.path), "inbox-v1.json")
+	if err := writeJSON(legacy, map[string]Page{
+		"old": {Items: []Thread{{Repository: "acme/app"}}, CheckedAt: time.Now()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cache, err = OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cache.Get("old"); !ok {
+		t.Fatal("legacy page was not imported")
+	}
+	if err := cache.Invalidate(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.Get("old"); ok {
+		t.Fatal("restart imported an invalidated legacy page")
+	}
+	if len(reopened.RecentRepositories()) != 1 {
+		t.Fatal("legacy migration lost repository history")
+	}
+}
+
+func TestCacheDoesNotOverwriteInvalidPages(t *testing.T) {
+	for _, operation := range []string{"save", "invalidate"} {
+		t.Run(operation, func(t *testing.T) {
+			cache, err := OpenCache(t.TempDir(), "github.com", "account")
+			if err != nil {
+				t.Fatal(err)
+			}
+			const broken = "{broken"
+			if err := os.WriteFile(cache.path, []byte(broken), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if operation == "save" {
+				err = cache.Save()
+			} else {
+				err = cache.Invalidate()
+			}
+			if err == nil {
+				t.Fatal("invalid page state was not reported")
+			}
+			body, err := os.ReadFile(cache.path)
+			if err != nil || string(body) != broken {
+				t.Fatalf("invalid page state was overwritten: %q, %v", body, err)
+			}
+		})
+	}
+}
+
+func TestInvalidationPersistsDespiteHistoryError(t *testing.T) {
+	root := t.TempDir()
+	cache, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.Put("old", Page{Items: []Thread{{Repository: "acme/app"}}, CheckedAt: time.Now()})
+	if err := cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := os.ReadFile(cache.repositoryPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cache.repositoryPath(), []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Invalidate(); err == nil || !strings.Contains(err.Error(), "save repository history") {
+		t.Fatalf("history error was not reported: %v", err)
+	}
+	if err := os.WriteFile(cache.repositoryPath(), history, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.Get("old"); ok {
+		t.Fatal("history error prevented persistent page invalidation")
+	}
+}
+
+func TestFailedInvalidationDoesNotMaskAnotherClientsAction(t *testing.T) {
+	root := t.TempDir()
+	cache, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(cache.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cache.path, []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Invalidate(); err == nil {
+		t.Fatal("invalid cache did not fail invalidation")
+	}
+	if err := os.WriteFile(cache.path, saved, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cache.Put("stale", Page{Items: []Thread{{Repository: "acme/app"}}, CheckedAt: time.Now()})
+	other, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Invalidate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.Get("stale"); ok {
+		t.Fatal("failed invalidation masked another client's successful invalidation")
+	}
+}
 
 func TestRepositoryHistoryConcurrentWriters(t *testing.T) {
 	root := t.TempDir()
@@ -144,7 +406,7 @@ func TestRepositoryHistorySeedsExistingPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSON(cache.path, map[string]Page{
+	if err := writeJSON(filepath.Join(filepath.Dir(cache.path), "inbox-v1.json"), map[string]Page{
 		"notifications": {Items: []Thread{{Repository: "acme/existing"}}},
 	}); err != nil {
 		t.Fatal(err)

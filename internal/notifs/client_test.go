@@ -190,6 +190,92 @@ func TestActionInvalidatesInflightPage(t *testing.T) {
 	}
 }
 
+func TestFetchRefreshesAnotherClientsInvalidation(t *testing.T) {
+	var acted atomic.Bool
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			acted.Store(true)
+			w.WriteHeader(http.StatusResetContent)
+			return
+		}
+		if acted.Load() && (r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "") {
+			t.Error("fetch reused validators from another client's invalidated page")
+		}
+		w.Header().Set("ETag", `"inbox"`)
+		raw := threadJSON("42", "Release", "subscribed")
+		if acted.Load() {
+			raw = strings.ReplaceAll(raw, `"unread":true`, `"unread":false`)
+		}
+		fmt.Fprintf(w, "[%s]", raw)
+	})
+	query, _ := ParseQuery("")
+	if _, err := c.Fetch(context.Background(), query, 10, nil); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(c.Cache.path)))
+	cache, err := OpenCache(root, "github.com", "test-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := &Client{HTTP: c.HTTP, BaseURL: c.BaseURL, Cache: cache}
+	if err := action.Action(context.Background(), "42", "read"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Fetch(context.Background(), query, 10, nil)
+	if err != nil || len(result.Items) != 1 || result.Items[0].Unread {
+		t.Fatalf("fetch did not refresh the invalidated page: %+v, %v", result, err)
+	}
+	reopened, err := OpenCache(root, "github.com", "test-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, ok := reopened.Get(Endpoint(query, 1))
+	if !ok || len(page.Items) != 1 || page.Items[0].Unread {
+		t.Fatalf("fetch did not persist the post-action page: %+v", page)
+	}
+}
+
+func TestOtherClientsActionInvalidatesInflightFetch(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			w.WriteHeader(http.StatusResetContent)
+			return
+		}
+		close(started)
+		<-release
+		fmt.Fprintf(w, "[%s]", threadJSON("42", "Release", "subscribed"))
+	})
+	root := filepath.Dir(filepath.Dir(filepath.Dir(c.Cache.path)))
+	cache, err := OpenCache(root, "github.com", "test-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := &Client{HTTP: c.HTTP, BaseURL: c.BaseURL, Cache: cache}
+	query, _ := ParseQuery("")
+	finished := make(chan error, 1)
+	go func() {
+		_, err := c.Fetch(context.Background(), query, 10, nil)
+		finished <- err
+	}()
+	<-started
+	err = action.Action(context.Background(), "42", "read")
+	close(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenCache(root, "github.com", "test-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.Get(Endpoint(query, 1)); ok {
+		t.Fatal("inflight fetch restored another client's invalidated page")
+	}
+}
+
 func TestRejectsForeignSubjectURL(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected request") })
 	if _, err := c.Preview(context.Background(), Thread{SubjectURL: "https://other.example/private"}); err == nil {
