@@ -5,43 +5,55 @@ Browse notifications, read conversations and reviews, and manage your inbox with
 Use the same program in scripts through tab-separated output.
 
 Built in Go with [go-gh](https://github.com/cli/go-gh) and [Vision](https://altscreen.io/vision).
-The project is unreleased.
 
 ## Get started
 
-You need Go 1.26.5 or later, [GitHub CLI](https://cli.github.com/), and access to the private Vision repository.
+Install [GitHub CLI](https://cli.github.com/), then authenticate:
 
 ```sh
-git clone https://github.com/aymanbagabas/gh-notifs
-cd gh-notifs
 gh auth login
-GOPRIVATE=altscreen.io/vision go mod download
-make build
-./bin/gh-notifs
 ```
 
-If you already use `GOPRIVATE`, include Vision alongside your existing patterns.
 Skip `gh auth login` if your account is already configured.
-Configure Git credentials with read access to Vision before the build.
 Your credentials must permit access to notifications and the relevant repositories.
+Release binaries do not require Go.
 
-To use `gh-notifs` from another directory, add the build directory to your shell's PATH:
-
-```sh
-export PATH="$PWD/bin:$PATH"
-```
-
-### Use as a GitHub CLI extension
-
-Build the executable in the repository root, then install the local extension:
+### GitHub CLI extension
 
 ```sh
-go build -o gh-notifs .
-gh extension install .
+gh extension install aymanbagabas/gh-notifs
 gh notifs
 ```
 
-On Windows, use `go build -o gh-notifs.exe .`.
+To update the extension:
+
+```sh
+gh extension upgrade notifs
+```
+
+GitHub CLI selects the release binary for your operating system and architecture.
+
+### Standalone binary
+
+Download a binary from the [latest release](https://github.com/aymanbagabas/gh-notifs/releases/latest).
+Choose your operating system and architecture:
+
+| Operating system | Asset suffixes |
+| --- | --- |
+| Linux | `linux-amd64`, `linux-arm64` |
+| macOS | `darwin-amd64` (Intel), `darwin-arm64` (Apple silicon) |
+| Windows | `windows-amd64.exe`, `windows-arm64.exe` |
+
+Rename the downloaded file to `gh-notifs` and place it on your PATH.
+On Windows, name it `gh-notifs.exe`.
+On Linux and macOS, make it executable:
+
+```sh
+chmod +x gh-notifs
+```
+
+Run `gh-notifs` to open the inbox.
+
 The examples below use `gh-notifs`; `gh notifs` accepts the same arguments.
 Both forms use GitHub CLI credentials, including supported environment variables such as `GH_TOKEN` and `GH_HOST`.
 
@@ -308,6 +320,25 @@ Website filters do not synchronize with sidebar scopes.
 
 ## Development
 
+Source builds need Go 1.26.5 or later.
+
+```sh
+git clone https://github.com/aymanbagabas/gh-notifs
+cd gh-notifs
+go mod download
+make build
+./bin/gh-notifs
+```
+
+To test a local extension, build the executable at the repository root:
+
+```sh
+go build -o gh-notifs .
+gh extension install .
+```
+
+On Windows, use `go build -o gh-notifs.exe .`.
+
 ```sh
 make build    # Build bin/gh-notifs
 make test     # Run tests with the race detector
@@ -316,6 +347,16 @@ make example  # Run offline examples
 ```
 
 The [examples](examples) cover repository history, API queries, TSV output, themes, configuration, previews, and discussions.
+
+### Release process
+
+The [Build workflow](.github/workflows/build.yml) tests the application and builds binaries for Linux, macOS, and Windows on amd64 and arm64.
+When a `v*` tag is pushed, it publishes the six binaries to GitHub Releases with generated release notes.
+Each binary embeds the tag as its version.
+Asset names end in `OS-ARCH`, with `.exe` on Windows, as required by `gh extension install`.
+
+The workflow's `GITHUB_TOKEN` publishes the release; no separate publication token is required.
+After the checks pass and the changes are committed, push a version tag such as `v1.0.0` to publish.
 
 ## License
 

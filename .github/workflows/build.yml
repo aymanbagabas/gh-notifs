@@ -13,9 +13,6 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    env:
-      GOPRIVATE: altscreen.io/vision
-      GH_TOKEN: ${{ secrets.VISION_READ_TOKEN || github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,10 +21,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Authenticate private dependency access
-        run: |
-          gh api repos/altscreen/vision --silent
-          gh auth setup-git
       - run: go test -race ./...
       - run: go vet ./...
       - run: go run ./examples/tsv
@@ -40,8 +33,6 @@ jobs:
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
     env:
-      GOPRIVATE: altscreen.io/vision
-      GH_TOKEN: ${{ secrets.VISION_READ_TOKEN || github.token }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
       CGO_ENABLED: "0"
@@ -53,7 +44,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - run: gh auth setup-git
       - name: Build extension
         env:
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
