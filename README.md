@@ -143,7 +143,7 @@ Repository history merges observations from separate list and action processes.
 Actions also persist an account-specific invalidation generation with the cached pages.
 A later save from another process cannot restore pre-action pages.
 An active inbox applies these invalidations on its next fetch.
-Existing notification caches migrate to `inbox-v2.json` on the next save.
+Notification pages and their invalidation generation share `inbox-v1.json`.
 Previews and conversations stay in memory.
 Cached notifications can contain private repository information.
 

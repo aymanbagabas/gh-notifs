@@ -133,16 +133,17 @@ func TestCacheCrossProcessInvalidation(t *testing.T) {
 	}
 }
 
-func TestLegacyPagesStayInvalidated(t *testing.T) {
+func TestCacheV1PersistsInvalidation(t *testing.T) {
 	root := t.TempDir()
 	cache, err := OpenCache(root, "github.com", "account")
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := filepath.Join(filepath.Dir(cache.path), "inbox-v1.json")
-	if err := writeJSON(legacy, map[string]Page{
-		"old": {Items: []Thread{{Repository: "acme/app"}}, CheckedAt: time.Now()},
-	}); err != nil {
+	if filepath.Base(cache.path) != "inbox-v1.json" {
+		t.Fatalf("unexpected cache filename: %s", cache.path)
+	}
+	cache.Put("old", Page{Items: []Thread{{Repository: "acme/app"}}, CheckedAt: time.Now()})
+	if err := cache.Save(); err != nil {
 		t.Fatal(err)
 	}
 	cache, err = OpenCache(root, "github.com", "account")
@@ -150,7 +151,7 @@ func TestLegacyPagesStayInvalidated(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := cache.Get("old"); !ok {
-		t.Fatal("legacy page was not imported")
+		t.Fatal("saved page was not restored")
 	}
 	if err := cache.Invalidate(); err != nil {
 		t.Fatal(err)
@@ -160,10 +161,13 @@ func TestLegacyPagesStayInvalidated(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := reopened.Get("old"); ok {
-		t.Fatal("restart imported an invalidated legacy page")
+		t.Fatal("restart restored an invalidated page")
+	}
+	if reopened.diskGeneration != cache.diskGeneration || reopened.diskGeneration == 0 {
+		t.Fatal("restart lost the invalidation generation")
 	}
 	if len(reopened.RecentRepositories()) != 1 {
-		t.Fatal("legacy migration lost repository history")
+		t.Fatal("invalidation lost repository history")
 	}
 }
 
@@ -406,9 +410,9 @@ func TestRepositoryHistorySeedsExistingPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSON(filepath.Join(filepath.Dir(cache.path), "inbox-v1.json"), map[string]Page{
+	if err := writeJSON(cache.path, cacheData{Pages: map[string]Page{
 		"notifications": {Items: []Thread{{Repository: "acme/existing"}}},
-	}); err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	reopened, err := OpenCache(root, "github.com", "account")

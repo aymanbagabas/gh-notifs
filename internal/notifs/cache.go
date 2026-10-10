@@ -40,7 +40,7 @@ func OpenCache(root, host, identity string) (*Cache, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	c := &Cache{path: filepath.Join(dir, "inbox-v2.json"), pages: make(map[string]Page),
+	c := &Cache{path: filepath.Join(dir, "inbox-v1.json"), pages: make(map[string]Page),
 		repositories: make(map[string]time.Time)}
 	lock, err := c.lockFile()
 	if err != nil {
@@ -73,12 +73,7 @@ func OpenCache(root, host, identity string) (*Cache, error) {
 func (c *Cache) readPages() (cacheData, error) {
 	data := cacheData{Pages: make(map[string]Page)}
 	b, err := os.ReadFile(c.path)
-	if errors.Is(err, os.ErrNotExist) {
-		b, err = os.ReadFile(filepath.Join(filepath.Dir(c.path), "inbox-v1.json"))
-		if err == nil {
-			err = json.Unmarshal(b, &data.Pages)
-		}
-	} else if err == nil {
+	if err == nil {
 		err = json.Unmarshal(b, &data)
 	}
 	if errors.Is(err, os.ErrNotExist) {
