@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/cli/go-gh/v2 v2.16.2
+	github.com/spf13/cobra v1.10.2
 )
 
 require (
@@ -22,9 +23,11 @@ require (
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
@@ -32,7 +35,7 @@ require (
 )
 
 require (
-	altscreen.io/vision v0.0.0-20261003200144-34dd4707e719
+	altscreen.io/vision v0.0.0-20261010044444-2099a84383ab
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/cli/safeexec v1.0.1 // indirect
 	github.com/cli/shurcooL-graphql v0.0.4 // indirect
@@ -43,7 +46,7 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/thlib/go-timezone-local v0.0.8 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1
