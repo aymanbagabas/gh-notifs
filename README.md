@@ -260,8 +260,23 @@ scopes:
 
 Each scope replaces the complete query, including any repository filter.
 Restart the inbox after edits.
-Use `scopes: []` to hide configured scopes; repository groups remain available.
+Use `scopes: []` to hide configured scopes; the Repositories section remains available.
 Noninteractive commands do not read or create this file.
+
+### Repository history
+
+The sidebar shows up to 25 repositories from fetched notifications, newest notification activity first.
+Configured scopes appear above Repositories, with a blank row between the sections.
+Click a repository to replace the query with its `repo:` filter.
+The full history supplies `repo:` completions, including repositories outside the displayed 25.
+For example, type `repo:` in the query editor to find an older repository.
+
+All observed repositories persist across launches, separately for each GitHub host and account.
+Read, done, and subscription actions do not erase this history.
+The history uses a separate `repositories-v1.json` file beside the notification cache.
+It can contain private repository names.
+It requires no extra API requests and includes only repositories the app has fetched.
+It does not show unread counts or remove repositories when their notifications disappear.
 
 ## Shell completions
 
@@ -299,7 +314,7 @@ make check    # Run go vet
 make example  # Run offline examples
 ```
 
-The [examples](examples) cover API queries, TSV output, themes, configuration, previews, and discussions.
+The [examples](examples) cover repository history, API queries, TSV output, themes, configuration, previews, and discussions.
 
 ## License
 

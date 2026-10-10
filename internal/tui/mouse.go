@@ -96,7 +96,7 @@ func (a *app) mouse(ctx context.Context, ev event.Event, sc *screen.Screen) bool
 				}
 			}
 			switch h.kind {
-			case "side", "scope", "group":
+			case "side", "scope":
 				a.sidebar = true
 				a.sideIndex = max(0, min(a.sideIndex+delta, len(a.sideEntries())-1))
 			case "preview":
@@ -167,13 +167,11 @@ func (a *app) mouse(ctx context.Context, ev event.Event, sc *screen.Screen) bool
 			if a.sideHidden {
 				a.sidebar = false
 			}
-		case "scope", "group":
+		case "scope":
 			entries := a.sideEntries()
 			if h.index < len(entries) {
 				a.sideIndex, a.sidebar = h.index, true
-				if h.kind == "group" {
-					a.toggleGroup(entries[h.index].group)
-				} else if a.apply(ctx, entries[h.index].query) {
+				if a.apply(ctx, entries[h.index].query) {
 					a.edit = false
 				}
 			}

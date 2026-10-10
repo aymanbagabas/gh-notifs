@@ -265,6 +265,16 @@ func (c *Client) page(ctx context.Context, endpoint string) (Page, error) {
 	return p, nil
 }
 
+func (c *Client) RecentRepositories() []Repository {
+	c.mu.Lock()
+	cache := c.Cache
+	c.mu.Unlock()
+	if cache == nil {
+		return nil
+	}
+	return cache.RecentRepositories()
+}
+
 func (c *Client) Cached(q Query, limit int) Result {
 	c.mu.Lock()
 	cache := c.Cache

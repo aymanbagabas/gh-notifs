@@ -537,6 +537,23 @@ func TestProgressArrivesBeforeDetails(t *testing.T) {
 	}
 }
 
+func TestRepositoryHistoryIncludesFilteredOutNotifications(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "[%s]", threadJSON("1", "Release", "subscribed"))
+	})
+	q, err := ParseQuery("is:pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Fetch(context.Background(), q, 10, nil)
+	if err != nil || len(result.Items) != 0 {
+		t.Fatalf("filtered fetch: %+v, %v", result, err)
+	}
+	if repos := c.RecentRepositories(); len(repos) != 1 || repos[0].Name != "acme/app" {
+		t.Fatalf("filtered-out notification did not update history: %+v", repos)
+	}
+}
+
 func BenchmarkCachedInbox(b *testing.B) {
 	cache, err := OpenCache(b.TempDir(), "github.com", "account")
 	if err != nil {

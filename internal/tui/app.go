@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +49,7 @@ type app struct {
 	options           Options
 	query             notifs.Query
 	result            notifs.Result
+	repositories      []notifs.Repository
 	cursor            int
 	page              int
 	scroll            int
@@ -105,7 +105,6 @@ type app struct {
 	dragOffset        layout.Position
 	hoverID           string
 	hoverSelect       bool
-	collapsed         map[string]bool
 	completionKey     string
 	completionIndex   int
 }
@@ -155,6 +154,7 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 		a.workers.Wait()
 	}()
 	a.result = client.Cached(a.query, options.PageSize)
+	a.repositories = client.RecentRepositories()
 	a.fetch(ctx, false)
 	events := p.Events(ctx)
 	for {
@@ -292,6 +292,7 @@ func (a *app) receive(ctx context.Context, msg message) {
 		return
 	}
 	if msg.result != nil {
+		a.repositories = a.client.RecentRepositories()
 		var id string
 		if t := a.current(); t != nil {
 			id = t.ID
@@ -455,11 +456,6 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 		a.sideHidden = !a.sideHidden
 		if a.sideHidden {
 			a.sidebar = false
-		}
-	case key.Matches("space"):
-		entries := a.sideEntries()
-		if a.sidebar && a.sideIndex < len(entries) {
-			a.toggleGroup(entries[a.sideIndex].group)
 		}
 	case key.MatchesAny("j", "down"):
 		if a.sidebar {
@@ -750,8 +746,8 @@ func (a *app) apply(ctx context.Context, raw string) bool {
 }
 
 type sideEntry struct {
-	label, query, group string
-	repository          bool
+	label, query string
+	repository   bool
 }
 
 func (a *app) sideEntries() []sideEntry {
@@ -759,36 +755,8 @@ func (a *app) sideEntries() []sideEntry {
 	for _, scope := range a.options.Scopes {
 		entries = append(entries, sideEntry{label: scope.Name, query: scope.Query})
 	}
-	seen := make(map[string]bool)
-	var repos []string
-	for _, t := range a.result.Items {
-		if t.Repository != "" && !seen[t.Repository] {
-			repos = append(repos, t.Repository)
-			seen[t.Repository] = true
-		}
-	}
-	sort.Strings(repos)
-	previous := ""
-	for _, repo := range repos {
-		owner, _, _ := strings.Cut(repo, "/")
-		if owner != previous {
-			entries = append(entries, sideEntry{label: owner, query: "org:" + owner, group: owner})
-			previous = owner
-		}
-		if !a.collapsed[owner] {
-			entries = append(entries, sideEntry{label: repo, query: "repo:" + repo, repository: true})
-		}
+	for _, repo := range a.repositories[:min(25, len(a.repositories))] {
+		entries = append(entries, sideEntry{label: repo.Name, query: "repo:" + repo.Name, repository: true})
 	}
 	return entries
-}
-
-func (a *app) toggleGroup(group string) {
-	if group == "" {
-		return
-	}
-	if a.collapsed == nil {
-		a.collapsed = make(map[string]bool)
-	}
-	a.collapsed[group] = !a.collapsed[group]
-	a.sideIndex = max(0, min(a.sideIndex, len(a.sideEntries())-1))
 }

@@ -25,7 +25,7 @@ const DefaultText = `# gh-notifs configuration
 # is:issue, is:pr, and is:pull-request all mean is:issue-or-pull-request.
 # Every title term and date bound must match. AND and OR are title words.
 # Dates use YYYY-MM-DD or RFC3339. Repeated dates use the strictest bounds.
-# Use scopes: [] to show only the repository groups.
+# Use scopes: [] to show only the repository history.
 scopes:
   - name: Inbox
     query: ""

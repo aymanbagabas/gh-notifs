@@ -192,39 +192,49 @@ func (a *app) paint(sc *screen.Screen) {
 		if !a.options.NoColor {
 			sideHeading = sideHeading.Foreground(palette.Muted)
 		}
-		put(1, 4, left-2, "Views and scopes", sideHeading)
-		offset := max(0, a.sideIndex-(footerTop-6))
-		for i := offset; i < len(entries) && i-offset < footerTop-5; i++ {
+		type sideRow struct {
+			label string
+			index int
+		}
+		var rows []sideRow
+		if len(a.options.Scopes) > 0 {
+			rows = append(rows, sideRow{"Views and scopes", -1})
+			for i := range a.options.Scopes {
+				rows = append(rows, sideRow{entries[i].label, i})
+			}
+			rows = append(rows, sideRow{"", -1})
+		}
+		rows = append(rows, sideRow{"Repositories", -1})
+		for i := len(a.options.Scopes); i < len(entries); i++ {
+			rows = append(rows, sideRow{entries[i].label, i})
+		}
+		selectedRow := 0
+		for i, row := range rows {
+			if row.index == a.sideIndex {
+				selectedRow = i
+			}
+		}
+		offset := max(0, selectedRow-(footerTop-4)+1)
+		for i := offset; i < len(rows) && i-offset < footerTop-4; i++ {
+			row := rows[i]
+			y := 4 + i - offset
+			if row.index < 0 {
+				put(1, y, left-2, row.label, sideHeading)
+				continue
+			}
 			st := normal
-			label := entries[i].label
-			y := 5 + i - offset
-			if entries[i].repository && !a.options.NoColor {
+			if entries[row.index].repository && !a.options.NoColor {
 				st = normal.Foreground(palette.Cyan)
 			}
-			if entries[i].group != "" {
-				st = accent
-				if !a.options.NoColor {
-					st = normal.Foreground(palette.Purple).Bold()
-				}
-				arrow := "▾"
-				if a.collapsed[entries[i].group] {
-					arrow = "▸"
-				}
-				label = arrow + " " + label + " "
-				label += strings.Repeat("─", max(0, left-2-sc.StringWidth(label)))
-			}
-			if a.sidebar && i == a.sideIndex {
+			if a.sidebar && row.index == a.sideIndex {
 				if a.options.NoColor {
 					st = st.Reverse()
 				} else {
 					st = st.Background(palette.Selection)
 				}
 			}
-			put(1, y, left-2, label, st)
-			a.target(layout.Rect(1, y, left-2, 1), "scope", i)
-			if entries[i].group != "" {
-				a.target(layout.Rect(1, y, 2, 1), "group", i)
-			}
+			put(1, y, left-2, row.label, st)
+			a.target(layout.Rect(1, y, left-2, 1), "scope", row.index)
 		}
 	} else if a.sidebar && len(entries) > 0 {
 		put(1, 5, w-2, "View: "+entries[a.sideIndex].label+" (Enter applies)", accent)

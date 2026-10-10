@@ -10,6 +10,7 @@ check:
 	go vet ./...
 
 example:
+	go run ./examples/repositories
 	go run ./examples/query
 	go run ./examples/tsv
 	go run ./examples/theme

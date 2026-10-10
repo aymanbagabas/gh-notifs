@@ -46,7 +46,6 @@ func helpRows(sc *screen.Screen, width int) [][]helpPart {
 			{"PgUp / PgDn", "Previous / next page", ""},
 			{"Tab", "Switch pane", "tab"},
 			{"b", "Toggle scopes", "b"},
-			{"Space", "Collapse group", "space"},
 			{"v", "Toggle preview", "v"},
 			{"m", "Toggle details", "m"},
 			{"1 / 2 / 3", "Body / discussion / threads", ""},

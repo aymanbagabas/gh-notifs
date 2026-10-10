@@ -129,13 +129,17 @@ func (a *app) suggestions() ([]string, int, int) {
 			values = []string{"open", "closed", "merged", "draft"}
 		case "author", "repo", "org":
 			values = nil
+			if field == "repo" {
+				for _, repo := range a.repositories {
+					values = append(values, repo.Name)
+				}
+				break
+			}
 			if field == "author" {
 				values = append(values, "@me")
 			}
 			for _, item := range a.result.Items {
 				switch field {
-				case "repo":
-					values = append(values, item.Repository)
 				case "org":
 					owner, _, _ := strings.Cut(item.Repository, "/")
 					values = append(values, owner)

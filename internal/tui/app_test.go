@@ -17,7 +17,8 @@ import (
 
 func testApp() *app {
 	return &app{client: &notifs.Client{Host: "github.com"}, options: Options{PageSize: 2},
-		selected: make(map[string]bool),
+		selected:     make(map[string]bool),
+		repositories: []notifs.Repository{{Name: "acme/app"}},
 		result: notifs.Result{Items: []notifs.Thread{
 			{ID: "1", Title: "Fix slow uploads", Type: "PullRequest", Repository: "acme/app", Number: 7, Unread: true},
 			{ID: "2", Title: "Release v1", Type: "Release", Repository: "acme/app"},
@@ -55,7 +56,7 @@ func TestRenderAndInput(t *testing.T) {
 	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 32})
 	a.paint(sc)
 	out := text.String(sc, color.Disabled)
-	for _, expected := range []string{"Notifications", "Fix slow uploads", "Views and scopes", "Refreshed"} {
+	for _, expected := range []string{"Notifications", "Fix slow uploads", "Repositories", "Refreshed"} {
 		if !strings.Contains(out, expected) {
 			t.Errorf("missing %q in screen", expected)
 		}

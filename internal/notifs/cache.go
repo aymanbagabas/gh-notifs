@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -20,10 +22,11 @@ type Page struct {
 }
 
 type Cache struct {
-	mu         sync.Mutex
-	path       string
-	pages      map[string]Page
-	generation uint64
+	mu           sync.Mutex
+	path         string
+	pages        map[string]Page
+	repositories map[string]time.Time
+	generation   uint64
 }
 
 func OpenCache(root, host, identity string) (*Cache, error) {
@@ -31,21 +34,74 @@ func OpenCache(root, host, identity string) (*Cache, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	c := &Cache{path: filepath.Join(dir, "inbox-v1.json"), pages: make(map[string]Page)}
+	c := &Cache{path: filepath.Join(dir, "inbox-v1.json"), pages: make(map[string]Page),
+		repositories: make(map[string]time.Time)}
 	b, err := os.ReadFile(c.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return c, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if err := json.Unmarshal(b, &c.pages); err != nil {
-		return nil, err
+	if err == nil {
+		if err := json.Unmarshal(b, &c.pages); err != nil {
+			return nil, err
+		}
 	}
 	if c.pages == nil {
 		c.pages = make(map[string]Page)
 	}
+	b, err = os.ReadFile(c.repositoryPath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if err == nil {
+		if err := json.Unmarshal(b, &c.repositories); err != nil {
+			return nil, fmt.Errorf("read repository history: %w", err)
+		}
+	}
+	if c.repositories == nil {
+		c.repositories = make(map[string]time.Time)
+	}
+	for _, page := range c.pages {
+		c.recordRepositories(page.Items)
+	}
 	return c, nil
+}
+
+type Repository struct {
+	Name      string
+	UpdatedAt time.Time
+}
+
+func (c *Cache) repositoryPath() string {
+	return filepath.Join(filepath.Dir(c.path), "repositories-v1.json")
+}
+
+// The caller holds c.mu, except during OpenCache initialization.
+func (c *Cache) recordRepositories(items []Thread) {
+	for _, item := range items {
+		if item.Repository == "" {
+			continue
+		}
+		updated, ok := c.repositories[item.Repository]
+		if !ok || item.UpdatedAt.After(updated) {
+			c.repositories[item.Repository] = item.UpdatedAt
+		}
+	}
+}
+
+func (c *Cache) RecentRepositories() []Repository {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	repositories := make([]Repository, 0, len(c.repositories))
+	for name, updated := range c.repositories {
+		repositories = append(repositories, Repository{Name: name, UpdatedAt: updated})
+	}
+	sort.Slice(repositories, func(i, j int) bool {
+		if repositories[i].UpdatedAt.Equal(repositories[j].UpdatedAt) {
+			return repositories[i].Name < repositories[j].Name
+		}
+		return repositories[i].UpdatedAt.After(repositories[j].UpdatedAt)
+	})
+	return repositories
 }
 
 func cacheKey(host, identity string) string {
@@ -66,6 +122,7 @@ func (c *Cache) Put(key string, page Page) {
 	defer c.mu.Unlock()
 	page.Items = append([]Thread(nil), page.Items...)
 	c.pages[key] = page
+	c.recordRepositories(page.Items)
 }
 
 func (c *Cache) Generation() uint64 {
@@ -80,6 +137,7 @@ func (c *Cache) PutIfCurrent(key string, page Page, generation uint64) {
 	if c.generation == generation {
 		page.Items = append([]Thread(nil), page.Items...)
 		c.pages[key] = page
+		c.recordRepositories(page.Items)
 	}
 }
 
@@ -91,7 +149,11 @@ func (c *Cache) Save() error {
 			delete(c.pages, key)
 		}
 	}
-	return writeJSON(c.path, c.pages)
+	historyErr := writeJSON(c.repositoryPath(), c.repositories)
+	if historyErr != nil {
+		historyErr = fmt.Errorf("save repository history: %w", historyErr)
+	}
+	return errors.Join(historyErr, writeJSON(c.path, c.pages))
 }
 
 func writeJSON(path string, value any) error {

@@ -16,7 +16,7 @@ import (
 	"github.com/aymanbagabas/gh-notifs/internal/theme"
 )
 
-func TestMouseSelectionDragAndGroups(t *testing.T) {
+func TestMouseSelectionDragAndScopes(t *testing.T) {
 	a := testApp()
 	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 32})
 	ctx := context.Background()
@@ -58,10 +58,8 @@ func TestMouseSelectionDragAndGroups(t *testing.T) {
 	if !a.selected["2"] {
 		t.Fatal("resized checkbox hit area is wrong")
 	}
-	before := len(a.sideEntries())
-	a.mouse(ctx, event.MouseClickEvent{X: 1, Y: 5, Button: event.MouseLeft}, sc)
-	if !a.collapsed["acme"] || len(a.sideEntries()) != before-1 {
-		t.Fatal("repository group did not collapse")
+	if entries := a.sideEntries(); len(entries) != 1 || entries[0].query != "repo:acme/app" {
+		t.Fatal("sidebar did not show a flat repository list")
 	}
 	a.options.Scopes = []config.Scope{{Name: "All", Query: ""}}
 	a.query.Raw = "repo:acme/app"
@@ -132,6 +130,7 @@ func TestEllipsisAndEmptySidebar(t *testing.T) {
 		}
 	}
 	a.result.Items = nil
+	a.repositories = nil
 	a.sidebar = true
 	a.key(context.Background(), event.Key{Code: 'g', Mod: event.KeyModShift})
 	a.key(context.Background(), event.Key{Code: event.KeyEnter})
