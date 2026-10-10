@@ -309,6 +309,9 @@ func (a *app) receive(ctx context.Context, msg message) {
 					}
 				}
 				a.clamp()
+				if current := a.current(); current == nil || current.ID != id {
+					a.resetPreview()
+				}
 			}
 		}
 	}
@@ -345,20 +348,26 @@ func (a *app) move(ctx context.Context, delta int) {
 	}
 }
 
-func (a *app) loadPreview(ctx context.Context) {
+func (a *app) resetPreview() {
 	a.resetDiscussions()
-	current := a.current()
-	if current == nil {
-		return
-	}
 	if a.cancelPreview != nil {
 		a.cancelPreview()
 	}
-	a.preview, a.previewID, a.previewOffset, a.metadataOffset = nil, current.ID, 0, 0
+	a.preview, a.previewID, a.previewOffset, a.metadataOffset = nil, "", 0, 0
+	a.previewGeneration++
+}
+
+func (a *app) loadPreview(ctx context.Context) {
+	a.resetPreview()
+	current := a.current()
+	if current == nil {
+		a.previewTab = 0
+		return
+	}
+	a.previewID = current.ID
 	if !supportsDiscussion(current, a.previewTab) {
 		a.previewTab = 0
 	}
-	a.previewGeneration++
 	previewGeneration := a.previewGeneration
 	item, generation := *current, a.generation
 	job, cancel := context.WithCancel(ctx)
@@ -579,7 +588,7 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 			a.sidebar = false
 		} else if current := a.current(); current != nil {
 			target := current.URL
-			if a.preview != nil && a.previewID == current.ID {
+			if a.preview != nil && a.previewID == current.ID && a.preview.URL != "" {
 				target = a.preview.URL
 			}
 			a.err = OpenBrowser(a.browser, target)

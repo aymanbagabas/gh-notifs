@@ -22,6 +22,9 @@ type previewRender struct {
 }
 
 func (a *app) previewLines(width int) ([]string, error) {
+	if a.current() == nil {
+		return []string{"No notification selected."}, nil
+	}
 	if a.preview == nil {
 		return []string{"Fetching preview..."}, nil
 	}
@@ -31,6 +34,9 @@ func (a *app) previewLines(width int) ([]string, error) {
 }
 
 func (a *app) metadataLines(width int) ([]string, error) {
+	if a.current() == nil {
+		return []string{"No notification selected."}, nil
+	}
 	if a.preview == nil {
 		return []string{"Fetching details..."}, nil
 	}
