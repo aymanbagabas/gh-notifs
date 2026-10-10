@@ -96,6 +96,8 @@ An empty search shows all filter names. Press Tab to insert the first filter, or
 Enter applies an empty query until you select a suggestion.
 Ctrl+Space opens completions at the cursor, including filter names after a space and values after a filter's colon.
 For example, type `is:unread `, then press Ctrl+Space to choose another filter.
+Each suggestion has a short description. For example, `reason:mention` shows "You were directly @mentioned".
+Select a suggestion to insert only its query text, without the description.
 Suggestions also appear as you type. Enter accepts a selected suggestion, or applies the query when none is selected.
 
 Click a row to focus it or its checkmark to select it.

@@ -9,11 +9,81 @@ import (
 	"strings"
 	"testing"
 
+	"altscreen.io/vision/color"
 	"altscreen.io/vision/event"
 	"altscreen.io/vision/layout"
 	"altscreen.io/vision/screen"
+	"altscreen.io/vision/text"
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
+	"github.com/aymanbagabas/gh-notifs/internal/theme"
 )
+
+func TestEveryCompletionHasDescription(t *testing.T) {
+	for _, input := range []string{"", "is:", "reason:", "state:", "repo:", "org:", "author:", "since:", "before:"} {
+		a := testApp()
+		a.result.Items[0].Repository = "acme/工具"
+		a.result.Items[0].Author = "octocat"
+		a.edit, a.input, a.caret = true, []rune(input), len(input)
+		values, _, _ := a.suggestions()
+		if len(values) == 0 {
+			t.Fatalf("no suggestions for %q", input)
+		}
+		for _, value := range values {
+			if completionDescription(value) == "" {
+				t.Errorf("missing description for %q", value)
+			}
+		}
+	}
+}
+
+func TestTypeAliasCompletionDescriptions(t *testing.T) {
+	for _, value := range []string{"is:issue", "is:pr", "is:pull-request"} {
+		if got := completionDescription(value); got != "Issues and pull requests (alias)" {
+			t.Fatalf("%s describes a separate type: %q", value, got)
+		}
+	}
+}
+
+func TestCompletionDescriptionLayoutAndInsertion(t *testing.T) {
+	for _, width := range []int{40, 60, 120} {
+		for _, noColor := range []bool{false, true} {
+			a := testApp()
+			a.options.NoColor = noColor
+			a.edit, a.input, a.caret = true, []rune("reason:ment"), 11
+			sc := screen.New(io.Discard, layout.Size{Width: width, Height: 32})
+			a.paint(sc)
+			target := findHit(t, a, "completion")
+			x := target.rect.Min.X + sc.StringWidth("reason:mention") + 3
+			if target.rect.Min.X < 0 || target.rect.Max.X > width {
+				t.Fatal("description extended the popup beyond the screen")
+			}
+			if sc.CellAt(layout.Pos(x, target.rect.Min.Y)).Content() != "Y" {
+				t.Fatal("completion description is missing or misaligned")
+			}
+			descriptionStyle := sc.CellAt(layout.Pos(x, target.rect.Min.Y)).Style
+			labelStyle := sc.CellAt(target.rect.Min.Add(layout.Pos(1, 0))).Style
+			if descriptionStyle.GetBackground() != labelStyle.GetBackground() {
+				t.Fatal("description lost the selection background")
+			}
+			if !noColor && descriptionStyle.GetForeground() != theme.Colors(false).Muted {
+				t.Fatal("description is not muted")
+			}
+			if width == 40 {
+				if sc.CellAt(layout.Pos(target.rect.Max.X-2, target.rect.Min.Y)).Content() != "…" {
+					t.Fatal("narrow popup did not truncate the description")
+				}
+			} else if !strings.Contains(text.String(sc, color.Disabled), "You were directly @mentioned") {
+				t.Fatal("wide popup did not show the complete description")
+			}
+			a.mouse(context.Background(), event.MouseClickEvent{
+				X: x, Y: target.rect.Min.Y, Button: event.MouseLeft,
+			}, sc)
+			if string(a.input) != "reason:mention" {
+				t.Fatalf("description click inserted %q", string(a.input))
+			}
+		}
+	}
+}
 
 func TestEmptySearchShowsFilters(t *testing.T) {
 	for _, input := range []string{"", "   "} {

@@ -8,6 +8,67 @@ import (
 	"unicode"
 )
 
+var completionDescriptions = map[string]string{
+	"repo:":                             "Notifications from a repository",
+	"org:":                              "Notifications from a repository owner",
+	"reason:":                           "Why you received the notification",
+	"is:":                               "Notification type or read state",
+	"author:":                           "Issue or pull request author",
+	"state:":                            "Issue or pull request state",
+	"since:":                            "Updated after this date (UTC)",
+	"before:":                           "Updated before this date (UTC)",
+	"is:read":                           "Notifications you have read",
+	"is:unread":                         "Notifications you have not read",
+	"is:issue":                          "Issues and pull requests (alias)",
+	"is:pr":                             "Issues and pull requests (alias)",
+	"is:pull-request":                   "Issues and pull requests (alias)",
+	"is:issue-or-pull-request":          "Issues and pull requests",
+	"is:discussion":                     "Repository discussions",
+	"is:release":                        "Repository releases",
+	"is:commit":                         "Commit activity",
+	"is:check-suite":                    "Check suite activity",
+	"is:repository-invitation":          "Repository invitations",
+	"is:repository-vulnerability-alert": "Repository vulnerability alerts",
+	"is:repository-advisory":            "Repository security advisories",
+	"is:gist":                           "Gist activity",
+	"reason:assign":                     "You were assigned to the issue or PR",
+	"reason:author":                     "You created the thread",
+	"reason:ci-activity":                "A workflow you triggered completed",
+	"reason:comment":                    "You commented on the thread",
+	"reason:invitation":                 "You accepted a repository invitation",
+	"reason:manual":                     "You subscribed to the thread",
+	"reason:participating":              "GitHub's participation filter",
+	"reason:mention":                    "You were directly @mentioned",
+	"reason:review-requested":           "You or your team were asked to review",
+	"reason:security-alert":             "GitHub found a security vulnerability",
+	"reason:state-change":               "You changed the thread state",
+	"reason:subscribed":                 "You watch the repository",
+	"reason:team-mention":               "Your team was @mentioned",
+	"state:open":                        "Open issues or pull requests",
+	"state:closed":                      "Closed issues or pull requests",
+	"state:merged":                      "Merged pull requests",
+	"state:draft":                       "Draft pull requests",
+	"author:@me":                        "Issues or pull requests you created",
+}
+
+func completionDescription(value string) string {
+	if description, ok := completionDescriptions[value]; ok {
+		return description
+	}
+	field, _, _ := strings.Cut(value, ":")
+	switch field {
+	case "repo":
+		return "Notifications from this repository"
+	case "org":
+		return "Notifications from this repository owner"
+	case "author":
+		return "Issues or pull requests by this author"
+	case "since", "before":
+		return completionDescriptions[field+":"]
+	}
+	return ""
+}
+
 func (a *app) suggestions() ([]string, int, int) {
 	if !a.edit {
 		return nil, 0, 0

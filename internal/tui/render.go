@@ -477,13 +477,18 @@ func (a *app) paint(sc *screen.Screen) {
 	suggestions, _, _ := a.suggestions()
 	if len(suggestions) > 0 {
 		_, column := queryViewport(sc, a.input, a.caret, w-10)
-		popupWidth := 24
+		labelWidth, descriptionWidth := 0, 0
 		for _, value := range suggestions {
-			popupWidth = max(popupWidth, sc.StringWidth(value)+3)
+			labelWidth = max(labelWidth, sc.StringWidth(value))
+			descriptionWidth = max(descriptionWidth, sc.StringWidth(completionDescription(value)))
+		}
+		count := min(8, h-8, len(suggestions))
+		popupWidth := max(24, labelWidth+descriptionWidth+4)
+		if len(suggestions) > count {
+			popupWidth++
 		}
 		popupWidth = min(popupWidth, w-2)
 		popupX := min(9+column, w-popupWidth-1)
-		count := min(8, h-8, len(suggestions))
 		offset := max(0, a.completionIndex-count+1)
 		textWidth := popupWidth
 		thumbSize, thumbStart := 0, 0
@@ -499,7 +504,16 @@ func (a *app) paint(sc *screen.Screen) {
 			if index == a.completionIndex {
 				st = selected
 			}
-			put(popupX, y, textWidth, " "+suggestions[index], st)
+			put(popupX, y, textWidth, "", st)
+			put(popupX+1, y, min(labelWidth, textWidth-2), suggestions[index], st)
+			descriptionX := labelWidth + 3
+			if available := textWidth - descriptionX - 1; available > 0 {
+				descriptionStyle := st
+				if !a.options.NoColor {
+					descriptionStyle = st.Foreground(palette.Muted)
+				}
+				put(popupX+descriptionX, y, available, completionDescription(suggestions[index]), descriptionStyle)
+			}
 			if thumbSize > 0 {
 				mark, markStyle := "│", st
 				if !a.options.NoColor {
