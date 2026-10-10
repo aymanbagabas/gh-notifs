@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -49,6 +50,54 @@ func TestTypeCompletionDescriptions(t *testing.T) {
 		if !slices.Contains(values, value) || completionDescription(value) != description {
 			t.Fatalf("missing or incorrect type completion: %s", value)
 		}
+	}
+}
+
+func TestEnterPreservesExactCompletion(t *testing.T) {
+	for _, input := range []string{"is:issue", "repo:acme/app"} {
+		for _, insert := range []bool{false, true} {
+			t.Run(input+"/insert="+fmt.Sprint(insert), func(t *testing.T) {
+				a := testApp()
+				a.repositories = append(a.repositories, notifs.Repository{Name: "acme/app-extra"})
+				a.messages = make(chan message, 8)
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				defer a.workers.Wait()
+				a.edit, a.input, a.caret = true, []rune(input), len(input)
+				if insert {
+					a.input, a.caret = a.input[:len(a.input)-1], a.caret-1
+					a.key(ctx, event.Key{Code: event.KeyTab})
+					if string(a.input) != input {
+						t.Fatalf("Tab inserted %q, want %q", string(a.input), input)
+					}
+				}
+				a.key(ctx, event.Key{Code: event.KeyEnter})
+				if a.edit || a.query.Raw != input {
+					t.Fatalf("Enter changed exact completion: input=%q query=%q editing=%t", string(a.input), a.query.Raw, a.edit)
+				}
+			})
+		}
+	}
+}
+
+func TestExactCompletionStillAllowsAlternatives(t *testing.T) {
+	for _, key := range []string{"down", "up", "ctrl+space", "tab"} {
+		t.Run(key, func(t *testing.T) {
+			a := testApp()
+			a.edit, a.input, a.caret = true, []rune("is:issue"), len("is:issue")
+			a.suggestions()
+			binding, err := event.ParseKey(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.key(context.Background(), binding)
+			if key != "tab" {
+				a.key(context.Background(), event.Key{Code: event.KeyEnter})
+			}
+			if !a.edit || string(a.input) != "is:issue-or-pull-request" {
+				t.Fatalf("explicit completion failed: input=%q editing=%t", string(a.input), a.edit)
+			}
+		})
 	}
 }
 

@@ -110,9 +110,6 @@ func (a *app) suggestions() ([]string, int, int) {
 	if prefix == "" && strings.TrimSpace(string(a.input)) != "" && a.completionIndex < 0 {
 		return nil, start, end
 	}
-	if prefix != "" && a.completionIndex < 0 {
-		a.completionIndex = 0
-	}
 	field, value, hasField := strings.Cut(prefix, ":")
 	values := []string{"repo:", "org:", "reason:", "is:", "author:", "state:", "since:", "before:"}
 	if hasField {
@@ -156,6 +153,7 @@ func (a *app) suggestions() ([]string, int, int) {
 	}
 	seen := make(map[string]bool)
 	var out []string
+	exact := false
 	if field == "repo" || field == "org" || field == "author" {
 		sort.Strings(values)
 	}
@@ -173,11 +171,18 @@ func (a *app) suggestions() ([]string, int, int) {
 		if hasField {
 			candidate = field + ":" + candidate
 		}
-		if strings.EqualFold(candidate, string(a.input[start:end])) || seen[candidate] {
+		if strings.EqualFold(candidate, string(a.input[start:end])) {
+			exact = true
+			continue
+		}
+		if seen[candidate] {
 			continue
 		}
 		seen[candidate] = true
 		out = append(out, candidate)
+	}
+	if prefix != "" && !exact && a.completionIndex < 0 {
+		a.completionIndex = 0
 	}
 	a.completionIndex = min(a.completionIndex, max(0, len(out)-1))
 	return out, start, end
