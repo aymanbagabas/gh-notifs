@@ -195,6 +195,9 @@ For example, `reason:participating reason:subscribed` merges participating notif
 The public API does not guarantee exact equivalence with the website's participation filter.
 Dates use notification update times and accept `YYYY-MM-DD` or RFC3339.
 Date-only values use midnight UTC; `since` and `before` exclude the boundary itself.
+Fractional RFC3339 bounds retain their precision in the local filter.
+REST requests use whole seconds: `since` rounds down, and a fractional `before` rounds up.
+These wider request bounds avoid the loss of locally matching notifications.
 Repeated dates use the latest `since` and earliest `before`, regardless of term order.
 Use `gh-notifs --help` for more query examples.
 

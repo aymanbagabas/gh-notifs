@@ -347,6 +347,50 @@ func TestEndpointUsesStrictestDates(t *testing.T) {
 	}
 }
 
+func TestFetchFractionalDateBounds(t *testing.T) {
+	for _, inclusive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("inclusive=%t", inclusive), func(t *testing.T) {
+			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				before, err := time.Parse(time.RFC3339, r.URL.Query().Get("before"))
+				if err != nil || before.Nanosecond() != 0 {
+					t.Errorf("REST before bound must use whole seconds: %s", r.URL)
+				}
+				since, err := time.Parse(time.RFC3339, r.URL.Query().Get("since"))
+				if err != nil || since.Nanosecond() != 0 {
+					t.Errorf("REST since bound must use whole seconds: %s", r.URL)
+				}
+				var items []string
+				for i, timestamp := range []string{
+					"2026-10-09T11:59:59Z", "2026-10-09T12:00:00Z", "2026-10-09T12:00:01Z",
+				} {
+					updated, _ := time.Parse(time.RFC3339, timestamp)
+					matches := updated.After(since) && updated.Before(before)
+					if inclusive {
+						matches = !updated.Before(since) && !updated.After(before)
+					}
+					if matches {
+						items = append(items, strings.ReplaceAll(threadJSON(fmt.Sprint(i), "Release", "subscribed"),
+							"2026-10-09T12:00:00Z", timestamp))
+					}
+				}
+				fmt.Fprintf(w, "[%s]", strings.Join(items, ","))
+			})
+			query, err := ParseQuery("since:2026-10-09T11:59:59.500Z before:2026-10-09T12:00:00.500Z")
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := c.Fetch(context.Background(), query, 10, nil)
+			if err != nil || len(result.Items) != 1 || result.Items[0].ID != "1" {
+				t.Fatalf("fractional bounds lost a locally matching notification: %+v, %v", result, err)
+			}
+			cached := c.Cached(query, 10)
+			if !reflect.DeepEqual(cached.Items, result.Items) {
+				t.Fatalf("cached fractional bounds differ: %+v", cached)
+			}
+		})
+	}
+}
+
 func TestConcurrentRepositoriesMergeAndCache(t *testing.T) {
 	bothStarted := make(chan struct{})
 	var started, calls, callbacks atomic.Int32

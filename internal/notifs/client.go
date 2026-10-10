@@ -188,6 +188,11 @@ func Endpoint(q Query, page int) string {
 		}
 	}
 	for field, when := range bounds {
+		// REST documents whole seconds; widen before and let the local filter
+		// enforce the original fractional bound.
+		if field == "before" && when.Nanosecond() != 0 {
+			when = when.Truncate(time.Second).Add(time.Second)
+		}
 		values.Set(field, when.UTC().Format(time.RFC3339))
 	}
 	return path + "?" + values.Encode()
