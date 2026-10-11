@@ -156,7 +156,13 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 	a.result = client.Cached(a.query, options.PageSize)
 	a.repositories = client.RecentRepositories()
 	a.fetch(ctx, false)
-	events := p.Events(ctx)
+	return a.run(ctx, p.Events(ctx))
+}
+
+func (a *app) run(ctx context.Context, events <-chan event.Event) error {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	p := a.program
 	for {
 		if err := a.render(); err != nil {
 			return err
@@ -164,6 +170,7 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-ticker.C:
 		case ev, ok := <-events:
 			if !ok {
 				return nil
