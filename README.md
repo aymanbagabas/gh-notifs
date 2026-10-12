@@ -33,6 +33,8 @@ gh notifs --org acme
 gh notifs --global -q 'is:unread reason:review-requested'
 gh notifs --global -q 'author:@me since:2026-10-01'
 gh notifs --auto-refresh --bell
+gh notifs --no-auto-refresh --no-bell
+gh notifs --config path/to/inbox.yml
 ```
 
 Press `/` to filter. Completions help you choose repositories, authors, reasons, types, states, and dates.
@@ -88,9 +90,12 @@ Use `gh notifs --help` or `gh notifs help read` for more options.
 ## Customize
 
 The inbox creates `gh-notifs/config.yml` in your user configuration directory.
-Use `--config path/to/inbox.yml` to select another file. Restart after edits.
+Restart after edits.
 
 ```yaml
+auto_refresh: true
+bell: true
+
 scopes:
   - name: Inbox
     query: ""
@@ -98,36 +103,8 @@ scopes:
     query: "is:unread reason:review-requested"
 ```
 
-Each sidebar scope replaces the complete query.
-
-Set `auto_refresh: true` and `bell: true` to enable automatic refresh and notification bells.
-Both default to `false`. The inbox polls at least 60 seconds apart and respects longer server delays.
-It watches the active query's loaded results, not the entire account.
-Bells signal new unread activity on manual or automatic refresh, but not the initial load.
-Your terminal controls their sound or appearance.
-Use `--auto-refresh` / `--no-auto-refresh` and `--bell` / `--no-bell` to override configuration.
-The last switch wins. These options do not change TSV commands.
-
-## Development
-
-Requires Go 1.26.5 or later.
-
-```sh
-make build    # Build bin/gh-notifs.
-make test     # Run tests with race detection.
-make check    # Run go vet.
-go run ./examples/inbox # Try the offline demo.
-go run ./examples/inbox --arrivals # Wait one minute for a new item and bell.
-```
-
-To try the error queue, submit `is:invalid` and then `state:invalid` in the offline demo's search.
-Cancel search, then press `Esc` or click the error to show the next one.
-
-To try pane resizing, press `v`, then drag the preview's top border up or down.
-Press `?` and drag the help section's top border. Close and reopen either section to keep its chosen height.
-
-To test a local extension, run `go build -o gh-notifs .`, then `gh extension install .`.
-On Windows, build `gh-notifs.exe`. More examples are in [examples/](examples).
+Each sidebar scope replaces the complete query when you select it.
+Automatic refresh and bells default to `false`; the example enables both.
 
 ## License
 
