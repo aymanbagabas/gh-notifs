@@ -66,5 +66,5 @@ if [[ "$size" != "2156x1544" ]]; then
   exit 1
 fi
 ffmpeg -v error -y -i "$capture" \
-  -filter_complex 'crop=2000:1344:78:124,split[a][b];[a]palettegen[p];[b][p]paletteuse' \
+  -filter_complex 'crop=2000:1344:78:124,pad=iw+64:ih+64:32:32:color=0x0d1117,split[a][b];[a]palettegen[p];[b][p]paletteuse' \
   -loop 0 assets/demo.gif
