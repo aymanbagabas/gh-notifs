@@ -27,6 +27,8 @@ const DefaultText = `# gh-notifs configuration
 # Every title term and date bound must match. AND and OR are title words.
 # Dates use YYYY-MM-DD or RFC3339. Repeated dates use the strictest bounds.
 # Use scopes: [] to show only the repository history.
+auto_refresh: false
+bell: false
 scopes:
   - name: Inbox
     query: ""
@@ -48,7 +50,9 @@ type Scope struct {
 }
 
 type Config struct {
-	Scopes []Scope `yaml:"scopes"`
+	Scopes      []Scope `yaml:"scopes"`
+	AutoRefresh bool    `yaml:"auto_refresh"`
+	Bell        bool    `yaml:"bell"`
 }
 
 func Path() (string, error) {

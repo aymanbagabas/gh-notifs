@@ -3,8 +3,10 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,11 +14,96 @@ import (
 	"time"
 
 	"altscreen.io/vision/color"
+	"altscreen.io/vision/event"
 	"altscreen.io/vision/program"
 	"altscreen.io/vision/term"
 	"altscreen.io/vision/text"
+	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 	"golang.org/x/sys/unix"
 )
+
+type bellTestOutput struct {
+	*os.File
+	bytes.Buffer
+	err error
+}
+
+func (w *bellTestOutput) Write(p []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	return w.Buffer.Write(p)
+}
+
+func TestRefreshBell(t *testing.T) {
+	output := &bellTestOutput{File: os.Stdout}
+	terminal, err := term.New(os.Stdin, output, nil)
+	if errors.Is(err, term.ErrNotTerminal) {
+		t.Skip("requires terminal input and output; run the compiled test in a PTY")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := program.New(terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := testApp()
+	a.program = p
+	a.autoRefresh, a.bell = true, true
+	now := time.Now()
+	for _, tc := range []struct {
+		name      string
+		ids       []string
+		automatic bool
+		enabled   bool
+		err       error
+		bells     int
+	}{
+		{"startup", []string{"1"}, false, true, nil, 0},
+		{"batch", []string{"2", "3"}, true, true, nil, 1},
+		{"unchanged", []string{"2", "3"}, true, true, nil, 1},
+		{"failure", []string{"4"}, true, true, errors.New("offline"), 1},
+		{"retry", []string{"4"}, true, true, nil, 2},
+		{"pagination", []string{"5"}, false, true, nil, 2},
+		{"already observed", []string{"5"}, true, true, nil, 2},
+		{"disabled", []string{"6"}, true, false, nil, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a.autoFetching, a.bell = tc.automatic, tc.enabled
+			a.notifyRefresh = tc.automatic
+			result := notifs.Result{}
+			for _, id := range tc.ids {
+				result.Items = append(result.Items, notifs.Thread{ID: id, Unread: true,
+					UpdatedAt: now.Add(time.Duration(id[0]) * time.Second)})
+			}
+			a.receive(context.Background(), message{generation: a.generation, final: true, result: &result, err: tc.err})
+			if got := strings.Count(output.String(), "\a"); got != tc.bells {
+				t.Fatalf("bell count=%d, want %d", got, tc.bells)
+			}
+		})
+	}
+	a.bell, a.notifyRefresh = true, true
+	a.autoRefresh, a.autoFetching = false, false
+	a.key(context.Background(), event.Key{Code: 'r', Mod: event.KeyModShift})
+	a.key(context.Background(), event.Key{Code: 'r', Mod: event.KeyModShift})
+	result := notifs.Result{Items: []notifs.Thread{{ID: "7", Unread: true, UpdatedAt: now.Add(time.Hour)}}}
+	a.receive(context.Background(), message{generation: a.generation, final: true, result: &result})
+	if got := strings.Count(output.String(), "\a"); got != 3 {
+		t.Fatalf("manual refresh with automatic refresh disabled: bell count=%d, want 3", got)
+	}
+	a.receive(context.Background(), message{generation: a.generation, final: true, result: &result})
+	if got := strings.Count(output.String(), "\a"); got != 3 {
+		t.Fatalf("unchanged manual refresh repeated the bell: %d", got)
+	}
+	output.err = errors.New("terminal write failed")
+	a.key(context.Background(), event.Key{Code: event.KeyEscape})
+	result.Items[0].UpdatedAt = now.Add(2 * time.Hour)
+	a.receive(context.Background(), message{generation: a.generation, final: true, result: &result})
+	if !errors.Is(a.err, output.err) {
+		t.Fatalf("bell failure was not reported: %v", a.err)
+	}
+}
 
 func TestRunUpdatesAgesWhileIdle(t *testing.T) {
 	p, err := program.Stdio()

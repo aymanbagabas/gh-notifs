@@ -19,6 +19,7 @@ type previewRender struct {
 	light   bool
 	noColor bool
 	lines   []string
+	err     error
 }
 
 func (a *app) previewLines(width int) ([]string, error) {
@@ -81,15 +82,17 @@ func (a *app) renderPreviewMarkdown(source string, width int, cache *previewRend
 	}
 	cached := *cache
 	if cached.source == source && cached.baseURL == baseURL && cached.width == width &&
-		cached.light == a.light && cached.noColor == a.options.NoColor && cached.lines != nil {
-		return cached.lines, nil
+		cached.light == a.light && cached.noColor == a.options.NoColor && (cached.lines != nil || cached.err != nil) {
+		return cached.lines, cached.err
 	}
 	rendered, err := theme.Render(source, baseURL, width, a.light, a.options.NoColor)
+	*cache = previewRender{source: source, baseURL: baseURL, width: width, light: a.light,
+		noColor: a.options.NoColor, err: err}
 	if err != nil {
+		a.queueError(fmt.Errorf("render preview: %w", err))
 		return nil, err
 	}
-	*cache = previewRender{source: source, baseURL: baseURL, width: width, light: a.light,
-		noColor: a.options.NoColor, lines: strings.Split(strings.TrimRight(rendered, "\n"), "\n")}
+	cache.lines = strings.Split(strings.TrimRight(rendered, "\n"), "\n")
 	return cache.lines, nil
 }
 
@@ -246,7 +249,6 @@ func (a *app) paintPreview(sc *screen.Screen, bounds layout.Rectangle) {
 			}
 		}
 		if err != nil {
-			a.err = fmt.Errorf("render %s: %w", kind, err)
 			lines = []string{"This pane could not be rendered."}
 		}
 		a.target(rect, kind, 0)

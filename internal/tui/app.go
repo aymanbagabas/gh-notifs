@@ -21,10 +21,12 @@ import (
 )
 
 type Options struct {
-	Query    notifs.Query
-	PageSize int
-	NoColor  bool
-	Scopes   []config.Scope
+	Query       notifs.Query
+	PageSize    int
+	NoColor     bool
+	Scopes      []config.Scope
+	AutoRefresh bool
+	Bell        bool
 }
 
 type message struct {
@@ -83,6 +85,7 @@ type app struct {
 	showPreview       bool
 	status            string
 	err               error
+	pendingErrors     []error
 	loading           bool
 	acting            bool
 	pendingAction     string
@@ -107,6 +110,13 @@ type app struct {
 	hoverSelect       bool
 	completionKey     string
 	completionIndex   int
+	autoRefresh       bool
+	bell              bool
+	autoFetching      bool
+	notifyRefresh     bool
+	nextRefresh       time.Time
+	activity          map[string]time.Time
+	latestActivity    time.Time
 }
 
 func Run(ctx context.Context, client *notifs.Client, options Options) (err error) {
@@ -147,6 +157,7 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	a := &app{client: client, program: p, options: options, query: options.Query,
+		autoRefresh: options.AutoRefresh, bell: options.Bell,
 		selected: make(map[string]bool), messages: make(chan message, 8),
 		browser: browser.New("", io.Discard, io.Discard)}
 	defer func() {
@@ -171,6 +182,7 @@ func (a *app) run(ctx context.Context, events <-chan event.Event) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			a.refreshIfDue(ctx, time.Now())
 		case ev, ok := <-events:
 			if !ok {
 				return nil
@@ -223,31 +235,45 @@ func (a *app) send(ctx context.Context, msg message) {
 }
 
 func (a *app) fetch(ctx context.Context, changed bool) {
+	a.startFetch(ctx, changed, false)
+}
+
+func (a *app) startFetch(ctx context.Context, changed, automatic bool) {
 	if a.acting {
 		return
 	}
-	a.resetDiscussions()
+	if !automatic {
+		a.resetDiscussions()
+		if a.cancelPreview != nil {
+			a.cancelPreview()
+		}
+		a.previewGeneration++
+	}
 	if a.cancelFetch != nil {
 		a.cancelFetch()
-	}
-	if a.cancelPreview != nil {
-		a.cancelPreview()
 	}
 	a.generation++
 	generation := a.generation
 	job, cancel := context.WithCancel(ctx)
 	a.cancelFetch = cancel
-	a.loading, a.err = true, nil
+	a.loading, a.autoFetching = true, automatic
+	a.notifyRefresh = automatic
 	if changed {
+		a.activity, a.latestActivity = nil, time.Time{}
 		a.page, a.cursor, a.scroll = 0, 0, 0
 		a.selected = make(map[string]bool)
 		a.preview, a.previewID = nil, ""
 		a.result = a.client.Cached(a.query, a.options.PageSize)
 	}
 	query, limit := a.query, (a.page+1)*a.options.PageSize
+	if automatic {
+		limit = max(limit, len(a.result.Items))
+	}
 	a.workers.Go(func() {
 		result, err := a.client.Fetch(job, query, limit, func(result notifs.Result) {
-			a.send(job, message{generation: generation, result: &result})
+			if !automatic {
+				a.send(job, message{generation: generation, result: &result})
+			}
 		})
 		if err == nil {
 			err = a.client.Enrich(job, result.Items)
@@ -260,18 +286,12 @@ func (a *app) receive(ctx context.Context, msg message) {
 	if msg.action != "" {
 		a.acting = false
 		if msg.err != nil {
-			a.err = msg.err
+			a.queueError(msg.err)
 		} else {
 			a.status = fmt.Sprintf("%s: %d notification(s)", msg.action, len(msg.ids))
 			a.selected = make(map[string]bool)
 		}
 		a.fetch(ctx, false)
-		if msg.err != nil {
-			a.err = msg.err
-		}
-		return
-	}
-	if msg.generation != a.generation {
 		return
 	}
 	if msg.previewID != "" {
@@ -294,9 +314,25 @@ func (a *app) receive(ctx context.Context, msg message) {
 				}
 				return
 			}
-			a.preview, a.previewID, a.err = msg.preview, msg.previewID, msg.err
+			a.preview, a.previewID = msg.preview, msg.previewID
+			a.queueError(msg.err)
 		}
 		return
+	}
+	if msg.generation != a.generation {
+		return
+	}
+	if msg.final {
+		a.nextRefresh = time.Now().Add(time.Minute)
+	}
+	if a.autoFetching && msg.err != nil {
+		a.loading = false
+		a.queueError(msg.err)
+		return
+	}
+	var previous notifs.Thread
+	if item := a.current(); item != nil {
+		previous = *item
 	}
 	if msg.result != nil {
 		a.repositories = a.client.RecentRepositories()
@@ -325,13 +361,40 @@ func (a *app) receive(ctx context.Context, msg message) {
 	if msg.final {
 		a.clamp()
 		a.loading = false
-		if !a.edit || msg.err != nil {
-			a.err = msg.err
+		a.queueError(msg.err)
+		if msg.err == nil && msg.result != nil {
+			arrived := a.observeActivity(msg.result.Items)
+			if a.notifyRefresh && a.bell && arrived {
+				if err := a.program.Beep(); err != nil {
+					a.queueError(fmt.Errorf("notification bell: %w", err))
+				}
+			}
 		}
-		if a.showPreview {
+		if a.showPreview && (!a.autoFetching || a.current() == nil || *a.current() != previous) {
 			a.loadPreview(ctx)
 		}
 	}
+}
+
+func (a *app) queueError(err error) {
+	if err == nil {
+		return
+	}
+	if a.err == nil {
+		a.err = err
+	} else {
+		a.pendingErrors = append(a.pendingErrors, err)
+	}
+}
+
+func (a *app) dismissError() {
+	if len(a.pendingErrors) == 0 {
+		a.err, a.pendingErrors = nil, nil
+		return
+	}
+	a.err = a.pendingErrors[0]
+	a.pendingErrors[0] = nil
+	a.pendingErrors = a.pendingErrors[1:]
 }
 
 func (a *app) current() *notifs.Thread {
@@ -418,6 +481,7 @@ func (a *app) act(ctx context.Context, action string, ids []string) {
 	if a.cancelFetch != nil {
 		a.cancelFetch()
 	}
+	a.resetPreview()
 	a.generation++
 	a.loading, a.acting = false, true
 	a.workers.Go(func() {
@@ -459,6 +523,17 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 	switch {
 	case key.Matches("q"):
 		return true
+	case key.Matches("esc"):
+		a.dismissError()
+	case key.MatchesAny("shift+r", "R"):
+		a.autoRefresh = !a.autoRefresh
+		if a.autoRefresh {
+			if a.nextRefresh.IsZero() {
+				a.nextRefresh = time.Now()
+			}
+		}
+	case key.MatchesAny("shift+b", "B"):
+		a.bell = !a.bell
 	case key.Matches("?"):
 		a.help, a.helpOffset = true, 0
 	case key.MatchesAny("/", "s"):
@@ -572,9 +647,10 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 	case key.Matches("r"):
 		if a.loading {
 			a.status = "A refresh is already in progress."
-		} else {
+		} else if !a.acting {
 			a.status = ""
 			a.fetch(ctx, false)
+			a.notifyRefresh = true
 		}
 	case key.Matches("v"):
 		a.showPreview = !a.showPreview
@@ -599,7 +675,7 @@ func (a *app) key(ctx context.Context, key event.Key) bool {
 			if a.preview != nil && a.previewID == current.ID && a.preview.URL != "" {
 				target = a.preview.URL
 			}
-			a.err = OpenBrowser(a.browser, target)
+			a.queueError(OpenBrowser(a.browser, target))
 		}
 	}
 	return false
@@ -753,7 +829,7 @@ func (a *app) apply(ctx context.Context, raw string) bool {
 	}
 	query, err := notifs.ParseQuery(raw)
 	if err != nil {
-		a.err = err
+		a.queueError(err)
 		return false
 	}
 	a.query = query

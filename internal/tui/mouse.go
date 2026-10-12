@@ -118,6 +118,8 @@ func (a *app) mouse(ctx context.Context, ev event.Event, sc *screen.Screen) bool
 			return false
 		}
 		switch h.kind {
+		case "dismiss-error":
+			a.dismissError()
 		case "query":
 			if !a.edit {
 				a.edit, a.input = true, []rune(a.query.Raw)

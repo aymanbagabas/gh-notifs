@@ -5,12 +5,49 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/aymanbagabas/gh-notifs/internal/config"
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 )
+
+func TestRefreshSwitchesOverrideConfig(t *testing.T) {
+	for _, defaults := range []bool{false, true} {
+		for _, tc := range []struct {
+			args          []string
+			refresh, bell bool
+		}{
+			{nil, defaults, defaults},
+			{[]string{"--auto-refresh", "--bell"}, true, true},
+			{[]string{"--no-auto-refresh", "--no-bell"}, false, false},
+			{[]string{"--no-auto-refresh", "--auto-refresh", "--bell", "--no-bell"}, true, false},
+			{[]string{"--auto-refresh", "list", "--no-auto-refresh", "--bell"}, false, true},
+			{[]string{"--no-bell", "list", "--bell", "--auto-refresh"}, true, true},
+		} {
+			opts, _, _, err := parseArgs(tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Config{AutoRefresh: defaults, Bell: defaults, Scopes: []config.Scope{{Name: "Inbox"}}}
+			before := cfg
+			got := opts.inboxOptions(cfg)
+			if got.AutoRefresh != tc.refresh || got.Bell != tc.bell {
+				t.Errorf("defaults=%t args=%v: got %+v", defaults, tc.args, got)
+			}
+			if !reflect.DeepEqual(cfg, before) {
+				t.Fatal("caller configuration changed")
+			}
+		}
+	}
+	for _, arg := range []string{"--auto-refresh=false", "--no-auto-refresh=false", "--bell=false", "--no-bell=false"} {
+		if _, _, _, err := parseArgs([]string{arg}); err == nil {
+			t.Errorf("accepted value in %s instead of the paired switch", arg)
+		}
+	}
+}
 
 func runCommand(t *testing.T, input string, args ...string) (string, string, error) {
 	t.Helper()

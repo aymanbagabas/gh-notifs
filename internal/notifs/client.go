@@ -35,6 +35,7 @@ type Client struct {
 	authorMu     sync.Mutex
 	authors      map[string]string
 	blockedUntil time.Time
+	pollAfter    time.Time
 	details      map[string]Thread
 }
 
@@ -73,6 +74,13 @@ func (c *Client) BlockedUntil() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.blockedUntil
+}
+
+// PollAfter is the earliest automatic refresh permitted by notification responses.
+func (c *Client) PollAfter() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maxTime(c.pollAfter, c.blockedUntil)
 }
 
 func maxTime(a, b time.Time) time.Time {
@@ -191,6 +199,17 @@ func (c *Client) page(ctx context.Context, endpoint string, details map[string]T
 		return Page{}, err
 	}
 	defer resp.Body.Close()
+	interval := time.Minute
+	if value := resp.Header.Get("X-Poll-Interval"); value != "" {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || seconds <= 0 || seconds > int64((1<<63-1)/time.Second) {
+			return Page{}, fmt.Errorf("invalid GitHub X-Poll-Interval %q", value)
+		}
+		interval = max(interval, time.Duration(seconds)*time.Second)
+	}
+	c.mu.Lock()
+	c.pollAfter = maxTime(c.pollAfter, time.Now().Add(interval))
+	c.mu.Unlock()
 	if resp.StatusCode == http.StatusNotModified {
 		if !ok {
 			return Page{}, fmt.Errorf("GitHub returned 304 without a cached page")

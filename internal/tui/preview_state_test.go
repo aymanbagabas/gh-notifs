@@ -60,7 +60,7 @@ func TestPreviewBrowserTarget(t *testing.T) {
 				var output bytes.Buffer
 				a.browser = browser.New(strconv.Quote(executable)+" -test.run=^TestPreviewBrowserStub$ --", &output, &output)
 				a.key(context.Background(), event.Key{Code: 'o'})
-				if a.err != nil || output.String() != want {
+				if a.err != previewErr || output.String() != want {
 					t.Fatalf("browser target=%q error=%v, want %q", output.String(), a.err, want)
 				}
 			})
@@ -106,6 +106,64 @@ func TestFetchRemovesStalePreview(t *testing.T) {
 			})
 			if a.preview != nil {
 				t.Error("invalidated preview response was accepted after returning to its item")
+			}
+		})
+	}
+}
+
+func TestPreviewAndRefreshErrorsStayQueued(t *testing.T) {
+	for _, order := range []string{"preview failure then fetch success", "fetch failure then preview success"} {
+		t.Run(order, func(t *testing.T) {
+			a := testApp()
+			a.autoFetching, a.showPreview = true, true
+			result := a.result
+			preview := message{generation: a.generation, previewGeneration: a.previewGeneration,
+				previewID: a.current().ID, preview: &notifs.Preview{Title: "Preview"}}
+			fetch := message{generation: a.generation, result: &result, final: true}
+			want, next := "preview unavailable", "notifications unavailable"
+			if order == "preview failure then fetch success" {
+				preview.err = errors.New(want)
+				a.receive(context.Background(), preview)
+				a.receive(context.Background(), fetch)
+			} else {
+				want, next = next, want
+				fetch.err = errors.New(want)
+				a.receive(context.Background(), fetch)
+				a.receive(context.Background(), preview)
+			}
+			sc := screen.New(io.Discard, layout.Size{Width: 160, Height: 40})
+			a.paint(sc)
+			if !strings.Contains(text.String(sc, color.Disabled), want) {
+				t.Fatalf("unresolved error disappeared after %s", order)
+			}
+
+			if preview.err == nil {
+				preview.err = errors.New(next)
+				a.receive(context.Background(), preview)
+			} else {
+				fetch.err = errors.New(next)
+				a.receive(context.Background(), fetch)
+			}
+			preview.err, fetch.err = nil, nil
+			a.receive(context.Background(), preview)
+			a.receive(context.Background(), fetch)
+			a.paint(sc)
+			out := text.String(sc, color.Disabled)
+			if !strings.Contains(out, want) || strings.Contains(out, next) {
+				t.Fatalf("oldest error did not remain visible after successful requests:\n%s", out)
+			}
+			a.key(context.Background(), event.Key{Code: event.KeyEscape})
+			a.paint(sc)
+			out = text.String(sc, color.Disabled)
+			if !strings.Contains(out, next) || strings.Contains(out, want) {
+				t.Fatalf("Escape did not reveal the next error:\n%s", out)
+			}
+			a.status = "Ready"
+			a.mouse(context.Background(), event.MouseClickEvent{X: 2, Y: 38, Button: event.MouseLeft}, sc)
+			a.paint(sc)
+			out = text.String(sc, color.Disabled)
+			if strings.Contains(out, "Error:") || !strings.Contains(out, "Ready") {
+				t.Fatalf("click did not dismiss the last error and restore status:\n%s", out)
 			}
 		})
 	}

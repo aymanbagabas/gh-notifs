@@ -32,6 +32,7 @@ gh notifs -R cli/cli
 gh notifs --org acme
 gh notifs --global -q 'is:unread reason:review-requested'
 gh notifs --global -q 'author:@me since:2026-10-01'
+gh notifs --auto-refresh --bell
 ```
 
 Press `/` to filter. Completions help you choose repositories, authors, reasons, types, states, and dates.
@@ -52,6 +53,8 @@ Quote title phrases, such as `"slow uploads"`.
 | `e` | Mark done, after confirmation |
 | `[` / `]` | Previous / next page |
 | `r` | Refresh |
+| `Shift+R` / `Shift+B` | Toggle automatic refresh / bells for this session |
+| `Esc` / click error | Dismiss the oldest error; queued errors appear in order |
 | `?` / `q` | Help / Quit |
 
 Click rows to focus them, click checkmarks to select them, and drag dividers to resize panes.
@@ -95,6 +98,14 @@ scopes:
 
 Each sidebar scope replaces the complete query.
 
+Set `auto_refresh: true` and `bell: true` to enable automatic refresh and notification bells.
+Both default to `false`. The inbox polls at least 60 seconds apart and respects longer server delays.
+It watches the active query's loaded results, not the entire account.
+Bells signal new unread activity on manual or automatic refresh, but not the initial load.
+Your terminal controls their sound or appearance.
+Use `--auto-refresh` / `--no-auto-refresh` and `--bell` / `--no-bell` to override configuration.
+The last switch wins. These options do not change TSV commands.
+
 ## Development
 
 Requires Go 1.26.5 or later.
@@ -104,7 +115,11 @@ make build    # Build bin/gh-notifs.
 make test     # Run tests with race detection.
 make check    # Run go vet.
 go run ./examples/inbox # Try the offline demo.
+go run ./examples/inbox --arrivals # Wait one minute for a new item and bell.
 ```
+
+To try the error queue, submit `is:invalid` and then `state:invalid` in the offline demo's search.
+Cancel search, then press `Esc` or click the error to show the next one.
 
 To test a local extension, run `go build -o gh-notifs .`, then `gh extension install .`.
 On Windows, build `gh-notifs.exe`. More examples are in [examples/](examples).

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -169,6 +170,54 @@ func TestQueryEditor(t *testing.T) {
 	a.key(context.Background(), event.Key{Code: event.KeyEscape})
 	if a.edit {
 		t.Fatal("Escape did not leave query input")
+	}
+}
+
+func TestErrorQueueControls(t *testing.T) {
+	for _, width := range []int{40, 120} {
+		a := testApp()
+		ctx := context.Background()
+		first, second := errors.New("first"), errors.New("second")
+		a.queueError(nil)
+		a.queueError(first)
+		a.queueError(second)
+		sc := screen.New(io.Discard, layout.Size{Width: width, Height: 32})
+		a.paint(sc)
+		out := text.String(sc, color.Disabled)
+		if !strings.Contains(out, "Error: first") || !strings.Contains(out, "Esc dismiss (2)") {
+			t.Fatalf("error controls missing at width %d:\n%s", width, out)
+		}
+		for _, modal := range []string{"search", "help", "confirmation"} {
+			switch modal {
+			case "search":
+				a.edit = true
+			case "help":
+				a.help = true
+			case "confirmation":
+				a.confirmAction("done")
+			}
+			a.key(ctx, event.Key{Code: event.KeyEscape})
+			if a.err != first || a.edit || a.help || a.pendingAction != "" {
+				t.Fatalf("Escape did not close only %s", modal)
+			}
+		}
+		a.edit = true
+		a.paint(sc)
+		a.mouse(ctx, event.MouseClickEvent{X: 2, Y: 30, Button: event.MouseLeft}, sc)
+		if a.err != second || !a.edit {
+			t.Fatal("error click changed the query editor or did not advance the queue")
+		}
+		a.key(ctx, event.Key{Code: event.KeyEscape})
+		a.key(ctx, event.Key{Code: event.KeyEscape})
+		a.paint(sc)
+		if a.err != nil || len(a.pendingErrors) != 0 || strings.Contains(text.String(sc, color.Disabled), "dismiss") {
+			t.Fatal("error queue or controls remained after dismissal")
+		}
+		a.key(ctx, event.Key{Code: event.KeyEscape})
+		a.queueError(first)
+		if a.err != first || len(a.pendingErrors) != 0 {
+			t.Fatal("empty queue did not accept a new error")
+		}
 	}
 }
 

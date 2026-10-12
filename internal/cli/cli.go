@@ -52,6 +52,7 @@ type options struct {
 	global, header, noColor                bool
 	help, version                          bool
 	limit, page                            int
+	autoRefresh, bell                      *bool
 }
 
 func Run(ctx context.Context, args []string, version string) error {
@@ -91,13 +92,35 @@ func parseArgs(args []string) (options, string, []string, error) {
 	flags.StringVar(&opts.repo, "R", "", "repository scope")
 	flags.StringVar(&opts.org, "org", "", "organization scope")
 	flags.StringVar(&opts.host, "hostname", "", "GitHub host")
-	flags.StringVar(&opts.configPath, "config", "", "scope configuration file")
+	flags.StringVar(&opts.configPath, "config", "", "inbox configuration file")
 	flags.BoolVar(&opts.global, "global", false, "all repositories")
 	flags.BoolVar(&opts.header, "header", false, "TSV header")
 	flags.BoolVar(&opts.noColor, "no-color", false, "disable colors")
 	flags.BoolVar(&opts.help, "help", false, "show help")
 	flags.BoolVar(&opts.help, "h", false, "show help")
 	flags.BoolVar(&opts.version, "version", false, "show version")
+	for _, toggle := range []struct {
+		name   string
+		target **bool
+	}{
+		{"auto-refresh", &opts.autoRefresh},
+		{"bell", &opts.bell},
+	} {
+		for _, enabled := range []bool{true, false} {
+			name := toggle.name
+			if !enabled {
+				name = "no-" + name
+			}
+			flags.BoolFunc(name, "interactive inbox setting", func(value string) error {
+				if value != "true" {
+					return fmt.Errorf("use --%s or --no-%s without a value", toggle.name, toggle.name)
+				}
+				setting := enabled
+				*toggle.target = &setting
+				return nil
+			})
+		}
+	}
 	flags.IntVar(&opts.limit, "limit", 50, "result limit")
 	flags.IntVar(&opts.limit, "L", 50, "result limit")
 	flags.IntVar(&opts.page, "page", 1, "result page")
@@ -122,18 +145,20 @@ func parseArgs(args []string) (options, string, []string, error) {
 	return opts, command, args, nil
 }
 
-const flagHelp = `  -q, --query TEXT       Filter notifications; repeated values are alternatives
-  -R, --repo OWNER/REPO  Add [HOST/]OWNER/REPO to repository alternatives
-      --org ORG          Add an organization to owner alternatives
-      --global           Ignore the current repository
-      --hostname HOST    GitHub host; defaults to the gh configuration
-  -L, --limit N          Results per page (default 50)
-      --page N           List result page (default 1; list only)
-      --config PATH      Scope configuration file (interactive inbox only)
-      --no-color         Disable TUI color
-      --header           Include column names in TSV
-      --version          Print version
-  -h, --help             Show help`
+const flagHelp = `  -q, --query TEXT          Filter notifications; repeated values are alternatives
+  -R, --repo OWNER/REPO     Add [HOST/]OWNER/REPO to repository alternatives
+      --org ORG             Add an organization to owner alternatives
+      --global              Ignore the current repository
+      --hostname HOST       GitHub host; defaults to the gh configuration
+  -L, --limit N             Results per page (default 50)
+      --page N              List result page (default 1; list only)
+      --config PATH         Inbox configuration file (interactive inbox only)
+      --[no-]auto-refresh   Enable or disable automatic inbox refresh
+      --[no-]bell           Enable or disable bells for new unread activity
+      --no-color            Disable TUI color
+      --header              Include column names in TSV
+      --version             Print version
+  -h, --help                Show help`
 
 func writeHelp(output io.Writer, command string) error {
 	use, long := "[command] [flags]", description
@@ -236,8 +261,10 @@ func (opts options) run(ctx context.Context, command string, args []string, inpu
 		if err != nil {
 			return err
 		}
-		return tui.Run(ctx, client, tui.Options{Query: query, PageSize: limit,
-			NoColor: noColor || term.IsColorDisabled(), Scopes: cfg.Scopes})
+		inbox := opts.inboxOptions(cfg)
+		inbox.Query, inbox.PageSize = query, limit
+		inbox.NoColor = noColor || term.IsColorDisabled()
+		return tui.Run(ctx, client, inbox)
 	}
 	result, err := client.Fetch(ctx, query, limit*page, nil)
 	if err != nil {
@@ -254,6 +281,17 @@ func (opts options) run(ctx context.Context, command string, args []string, inpu
 		}
 	}
 	return WriteTSV(output, items)
+}
+
+func (opts options) inboxOptions(cfg config.Config) tui.Options {
+	inbox := tui.Options{Scopes: cfg.Scopes, AutoRefresh: cfg.AutoRefresh, Bell: cfg.Bell}
+	if opts.autoRefresh != nil {
+		inbox.AutoRefresh = *opts.autoRefresh
+	}
+	if opts.bell != nil {
+		inbox.Bell = *opts.bell
+	}
+	return inbox
 }
 
 func (opts options) scopedQuery(host string) (notifs.Query, error) {

@@ -406,7 +406,7 @@ func (a *app) paint(sc *screen.Screen) {
 		}
 		a.paintPreview(sc, layout.Rect(left, listBottom+1, w-left, footerTop-listBottom-1))
 	}
-	status := "Not refreshed yet"
+	status, nextStatus := "Not refreshed yet", ""
 	if !a.result.CheckedAt.IsZero() {
 		status = "Refreshed " + age(a.result.CheckedAt) + " (" + a.result.CheckedAt.Local().Format("15:04:05") + ")"
 	}
@@ -419,9 +419,36 @@ func (a *app) paint(sc *screen.Screen) {
 	if a.acting {
 		status += " │ applying action..."
 	}
+	if a.autoRefresh && !a.loading && !a.acting {
+		if deadline := a.refreshDeadline(); !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				nextStatus = "Next: waiting"
+			} else {
+				seconds := remaining / time.Second
+				if remaining%time.Second != 0 {
+					seconds++
+				}
+				nextStatus = fmt.Sprintf("Next in %ds (%s)", seconds, deadline.Local().Format("15:04:05"))
+			}
+			status += " │ " + nextStatus
+		}
+	}
 	put(0, footerTop, w, strings.Repeat("─", w), divider)
 	if left > 0 {
 		put(left-1, footerTop, 1, "┴", sideBorder)
+	}
+	if !a.help {
+		autoLabel, bellLabel := "R Auto:off", "B Bell:off"
+		if a.autoRefresh {
+			autoLabel = "R Auto:on"
+		}
+		if a.bell {
+			bellLabel = "B Bell:on"
+		}
+		x := w - sc.StringWidth(autoLabel) - sc.StringWidth(bellLabel) - 5
+		x += button(x, footerTop, w-x, autoLabel, "shift+r", true, 'R')
+		button(x, footerTop, w-x, bellLabel, "shift+b", true, 'B')
 	}
 	statusStyle := dim
 	if (a.loading || a.acting) && !a.options.NoColor {
@@ -439,6 +466,9 @@ func (a *app) paint(sc *screen.Screen) {
 	}
 	counterWidth := sc.StringWidth(counter)
 	counterX := w - counterWidth - 1
+	if nextStatus != "" && sc.StringWidth(status) > counterX-3 {
+		status = nextStatus
+	}
 	put(1, footerTop+1, counterX-3, status, statusStyle)
 	put(counterX, footerTop+1, counterWidth, counter, dim)
 	if a.help {
@@ -471,13 +501,25 @@ func (a *app) paint(sc *screen.Screen) {
 		}
 	}
 	message, st := a.status, normal
+	messageWidth := w - 2
 	if a.err != nil {
 		message, st = "Error: "+a.err.Error(), warning
 		if !a.options.NoColor {
 			st = st.Foreground(palette.Danger)
 		}
+		label := "Esc dismiss"
+		if a.edit || a.help {
+			label = "Click dismiss"
+		}
+		if len(a.pendingErrors) > 0 {
+			label += fmt.Sprintf(" (%d)", len(a.pendingErrors)+1)
+		}
+		labelWidth := sc.StringWidth(label)
+		messageWidth -= labelWidth + 1
+		put(w-labelWidth-1, h-2, labelWidth, label, accent)
+		a.target(layout.Rect(1, h-2, w-2, 1), "dismiss-error", 0)
 	}
-	put(1, h-2, w-2, message, st)
+	put(1, h-2, messageWidth, message, st)
 	x := 1
 	for _, control := range []helpBinding{
 		{"/", "search", "/"},
