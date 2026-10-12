@@ -50,6 +50,15 @@ func (a *app) windowTitle() string {
 }
 
 func (a *app) render() error {
+	if !a.options.NoColor {
+		background := theme.Colors(a.light).Background
+		if a.terminalBG != background {
+			if err := a.program.SetBackgroundColor(background); err != nil {
+				return fmt.Errorf("set terminal background: %w", err)
+			}
+			a.terminalBG = background
+		}
+	}
 	title := a.windowTitle()
 	if title != a.title {
 		if err := a.program.SetTitle(title); err != nil {

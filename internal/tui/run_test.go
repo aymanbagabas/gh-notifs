@@ -13,12 +13,14 @@ import (
 	"testing/synctest"
 	"time"
 
+	"altscreen.io/vision/ansi"
 	"altscreen.io/vision/color"
 	"altscreen.io/vision/event"
 	"altscreen.io/vision/program"
 	"altscreen.io/vision/term"
 	"altscreen.io/vision/text"
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
+	"github.com/aymanbagabas/gh-notifs/internal/theme"
 	"golang.org/x/sys/unix"
 )
 
@@ -102,6 +104,69 @@ func TestRefreshBell(t *testing.T) {
 	a.receive(context.Background(), message{generation: a.generation, final: true, result: &result})
 	if !errors.Is(a.err, output.err) {
 		t.Fatalf("bell failure was not reported: %v", a.err)
+	}
+}
+
+func TestTerminalBackgroundFollowsTheme(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		output := &bellTestOutput{File: os.Stdout}
+		terminal, err := term.New(os.Stdin, output, nil)
+		if errors.Is(err, term.ErrNotTerminal) {
+			t.Skip("requires terminal input and output; run the compiled test in a PTY")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := program.New(terminal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { p.Finish() })
+		a := testApp()
+		a.program, a.options.NoColor = p, noColor
+		events := make(chan event.Event, 6)
+		events <- event.BackgroundColorEvent{Color: theme.Colors(true).Background}
+		events <- event.ColorSchemeEvent(event.ColorSchemeDark)
+		// A delayed background reply must not override the explicit scheme.
+		events <- event.BackgroundColorEvent{Color: theme.Colors(true).Background}
+		events <- event.ColorSchemeEvent(event.ColorSchemeLight)
+		events <- event.ColorSchemeEvent(event.ColorSchemeLight)
+		close(events)
+		if err := a.run(context.Background(), events); err != nil {
+			t.Fatal(err)
+		}
+		if !a.light {
+			t.Fatal("last color scheme was not applied")
+		}
+		for _, light := range []bool{false, true} {
+			bg := theme.Colors(light).Background
+			sequence := ansi.SetBackgroundColor(ansi.XParseRGB(bg.R, bg.G, bg.B))
+			want := 2
+			if noColor {
+				want = 0
+			}
+			if got := strings.Count(output.String(), sequence); got != want {
+				t.Fatalf("noColor=%t light=%t: background writes=%d, want %d", noColor, light, got, want)
+			}
+		}
+		if !noColor {
+			output.err = errors.New("background write failed")
+			a.light = false
+			if err := a.render(); !errors.Is(err, output.err) {
+				t.Fatalf("background write error was lost: %v", err)
+			}
+			if a.terminalBG != theme.Colors(true).Background {
+				t.Fatal("failed write recorded an unapplied color")
+			}
+			output.err = nil
+		}
+		output.Reset()
+		if err := p.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(output.String(), ansi.ResetBackgroundColor); got == noColor {
+			t.Fatalf("noColor=%t: terminal background reset=%t", noColor, got)
+		}
 	}
 }
 

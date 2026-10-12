@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"runtime/debug"
 	"strings"
@@ -65,6 +66,8 @@ type app struct {
 	paste             strings.Builder
 	pasting           bool
 	light             bool
+	colorSchemeKnown  bool
+	terminalBG        color.RGBA
 	markdown          previewRender
 	metadataMarkdown  previewRender
 	help              bool
@@ -210,13 +213,11 @@ func (a *app) run(ctx context.Context, events <-chan event.Event) error {
 				}
 			case event.ColorSchemeEvent:
 				a.light = event.ColorScheme(ev) == event.ColorSchemeLight
-				if !a.options.NoColor {
-					if err := p.RequestBackgroundColor(); err != nil {
-						return err
-					}
-				}
+				a.colorSchemeKnown = true
 			case event.BackgroundColorEvent:
-				a.light = theme.IsLight(ev.Color)
+				if !a.colorSchemeKnown {
+					a.light = theme.IsLight(ev.Color)
+				}
 			case event.FocusOutEvent:
 				a.hoverID, a.hoverSelect = "", false
 				a.dialogHover = 0
