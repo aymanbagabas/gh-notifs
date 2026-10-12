@@ -58,6 +58,8 @@ Quote title phrases, such as `"slow uploads"`.
 | `?` / `q` | Help / Quit |
 
 Click rows to focus them, click checkmarks to select them, and drag dividers to resize panes.
+Drag the preview or help top border to change its height. Sizes last for the session.
+Supported terminals change the pointer shape over controls and during a drag.
 Previews do not mark notifications read. Opening GitHub in a browser can.
 Cached notifications and repository history can contain private information.
 
@@ -120,6 +122,9 @@ go run ./examples/inbox --arrivals # Wait one minute for a new item and bell.
 
 To try the error queue, submit `is:invalid` and then `state:invalid` in the offline demo's search.
 Cancel search, then press `Esc` or click the error to show the next one.
+
+To try pane resizing, press `v`, then drag the preview's top border up or down.
+Press `?` and drag the help section's top border. Close and reopen either section to keep its chosen height.
 
 To test a local extension, run `go build -o gh-notifs .`, then `gh extension install .`.
 On Windows, build `gh-notifs.exe`. More examples are in [examples/](examples).

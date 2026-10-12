@@ -19,11 +19,91 @@ func (a *app) target(rect layout.Rectangle, kind string, index int) {
 	a.hits = append(a.hits, hit{rect: rect, kind: kind, index: index})
 }
 
+func (a *app) hitAt(position layout.Position) *hit {
+	for i := len(a.hits) - 1; i >= 0; i-- {
+		if position.In(a.hits[i].rect) {
+			return &a.hits[i]
+		}
+	}
+	return nil
+}
+
+func (a *app) mousePointer(sc *screen.Screen) string {
+	if !a.mouseKnown {
+		return "default"
+	}
+	dragTarget, dragShape := "", ""
+	switch a.dragging {
+	case "side":
+		dragTarget, dragShape = "divider", "ew-resize"
+	case "metadata":
+		dragTarget, dragShape = "metadata-divider", "ew-resize"
+	case "preview", "help":
+		dragTarget, dragShape = a.dragging+"-divider", "ns-resize"
+	case "dialog":
+		dragTarget, dragShape = "dialog-title", "grabbing"
+	}
+	if dragTarget != "" {
+		for _, h := range a.hits {
+			if h.kind == dragTarget {
+				return dragShape
+			}
+		}
+		// Closing or hiding a pane also ends its drag.
+		a.dragging = ""
+	}
+	if h := a.hitAt(a.mousePosition); h != nil {
+		switch h.kind {
+		case "query":
+			return "text"
+		case "divider", "metadata-divider":
+			return "ew-resize"
+		case "preview-divider", "help-divider":
+			return "ns-resize"
+		case "dialog-title":
+			return "grab"
+		case "dialog", "side", "list", "item", "preview", "metadata", "help":
+		default:
+			return "pointer"
+		}
+	}
+	if a.pendingAction == "" {
+		if cell := sc.CellAt(a.mousePosition); cell != nil && cell.Style.HasLink() {
+			return "pointer"
+		}
+	}
+	return "default"
+}
+
+func (a *app) helpSize(height, lines int) int {
+	size := a.helpHeight
+	if size == 0 {
+		size = min(lines+4, max(6, height/2))
+	}
+	top := 8
+	if a.showPreview && height >= 22 {
+		top = 16
+	}
+	return max(6, min(size, height-top))
+}
+
+func (a *app) previewTop(footerTop int) int {
+	if !a.showPreview || footerTop < 16 {
+		return footerTop
+	}
+	height := a.previewHeight
+	if height == 0 {
+		return (footerTop + 4) / 2
+	}
+	return footerTop - max(6, min(height, footerTop-8))
+}
+
 func (a *app) mouse(ctx context.Context, ev event.Event, sc *screen.Screen) bool {
 	m, ok := event.AsMouse(ev)
 	if !ok {
 		return false
 	}
+	a.mousePosition, a.mouseKnown = layout.Pos(m.X, m.Y), true
 	if _, released := ev.(event.MouseReleaseEvent); released {
 		a.dragging = ""
 		return false
@@ -40,6 +120,13 @@ func (a *app) mouse(ctx context.Context, ev event.Event, sc *screen.Screen) bool
 				a.metadataWidth = max(24, min(sc.Size().Width-m.X-1, a.previewBounds.Dx()-38))
 			}
 			return false
+		case "preview":
+			a.previewHeight = max(6, min(a.previewBounds.Max.Y-m.Y, a.previewBounds.Max.Y-8))
+			return false
+		case "help":
+			a.helpHeight = max(6, sc.Size().Height-m.Y)
+			a.helpHeight = a.helpSize(sc.Size().Height, 0)
+			return false
 		case "dialog":
 			a.dialogPosition = layout.Pos(
 				max(0, min(m.X-a.dragOffset.X, sc.Size().Width-a.dialogRect.Dx())),
@@ -47,27 +134,14 @@ func (a *app) mouse(ctx context.Context, ev event.Event, sc *screen.Screen) bool
 			)
 			return false
 		}
-		if a.pendingAction != "" {
-			for i := len(a.hits) - 1; i >= 0; i-- {
-				h := a.hits[i]
-				if layout.Pos(m.X, m.Y).In(h.rect) {
-					if h.kind == "confirm" || h.kind == "cancel" {
-						a.dialogHover = h.index
-					}
-					break
+		if h := a.hitAt(a.mousePosition); h != nil {
+			if a.pendingAction != "" {
+				if h.kind == "confirm" || h.kind == "cancel" {
+					a.dialogHover = h.index
 				}
-			}
-		} else {
-			for i := len(a.hits) - 1; i >= 0; i-- {
-				h := a.hits[i]
-				if !layout.Pos(m.X, m.Y).In(h.rect) {
-					continue
-				}
-				if (h.kind == "item" || h.kind == "checkbox") && h.index < len(a.result.Items) {
-					a.hoverID = a.result.Items[h.index].ID
-					a.hoverSelect = h.kind == "checkbox"
-				}
-				break
+			} else if (h.kind == "item" || h.kind == "checkbox") && h.index < len(a.result.Items) {
+				a.hoverID = a.result.Items[h.index].ID
+				a.hoverSelect = h.kind == "checkbox"
 			}
 		}
 		return false
@@ -145,6 +219,10 @@ func (a *app) mouse(ctx context.Context, ev event.Event, sc *screen.Screen) bool
 			a.dragging = "side"
 		case "metadata-divider":
 			a.dragging = "metadata"
+		case "preview-divider":
+			a.dragging = "preview"
+		case "help-divider":
+			a.dragging = "help"
 		case "metadata-toggle":
 			a.toggleMetadata()
 		case "preview":

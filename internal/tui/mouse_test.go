@@ -10,6 +10,7 @@ import (
 	"altscreen.io/vision/event"
 	"altscreen.io/vision/layout"
 	"altscreen.io/vision/screen"
+	"altscreen.io/vision/style"
 	"altscreen.io/vision/text"
 	"github.com/aymanbagabas/gh-notifs/internal/config"
 	"github.com/aymanbagabas/gh-notifs/internal/notifs"
@@ -193,5 +194,205 @@ func TestMouseCannotChangePendingActionTargets(t *testing.T) {
 	}
 	if a.pendingAction != "" || a.acting {
 		t.Fatal("cancel click did not dismiss the action")
+	}
+}
+
+func TestMousePointerTargetsAndDrags(t *testing.T) {
+	a := testApp()
+	a.result.Items[0].URL = "https://github.com/acme/app/pull/7"
+	a.showPreview, a.help = true, true
+	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 48})
+	ctx := context.Background()
+	a.paint(sc)
+	if got := a.mousePointer(sc); got != "default" {
+		t.Fatalf("pointer before mouse input=%q", got)
+	}
+	for _, tc := range []struct{ kind, shape string }{
+		{"query", "text"}, {"item", "default"}, {"checkbox", "pointer"},
+		{"scope", "pointer"}, {"toggle", "pointer"}, {"preview-tab", "pointer"},
+		{"metadata-toggle", "pointer"}, {"divider", "ew-resize"},
+		{"metadata-divider", "ew-resize"}, {"preview-divider", "ns-resize"},
+		{"help-divider", "ns-resize"}, {"metadata", "default"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			h := findHit(t, a, tc.kind)
+			a.mouse(ctx, event.MouseMoveEvent{X: h.rect.Min.X, Y: h.rect.Min.Y}, sc)
+			if got := a.mousePointer(sc); got != tc.shape {
+				t.Fatalf("pointer=%q, want %q", got, tc.shape)
+			}
+		})
+	}
+	item := findHit(t, a, "item")
+	a.mouse(ctx, event.MouseMoveEvent{X: item.rect.Min.X + 9, Y: item.rect.Min.Y + 1}, sc)
+	if got := a.mousePointer(sc); got != "pointer" {
+		t.Fatalf("item hyperlink pointer=%q", got)
+	}
+	// The help close button must take precedence over its resize border.
+	a.mouse(ctx, event.MouseMoveEvent{X: 108, Y: findHit(t, a, "help-divider").rect.Min.Y}, sc)
+	if got := a.mousePointer(sc); got != "pointer" {
+		t.Fatalf("help close pointer=%q", got)
+	}
+	for _, tc := range []struct{ kind, shape string }{
+		{"divider", "ew-resize"}, {"metadata-divider", "ew-resize"},
+		{"preview-divider", "ns-resize"}, {"help-divider", "ns-resize"},
+	} {
+		h := findHit(t, a, tc.kind)
+		a.mouse(ctx, event.MouseClickEvent{X: h.rect.Min.X, Y: h.rect.Min.Y, Button: event.MouseLeft}, sc)
+		a.mouse(ctx, event.MouseMoveEvent{X: 0, Y: 0, Button: event.MouseLeft}, sc)
+		a.paint(sc)
+		if got := a.mousePointer(sc); got != tc.shape {
+			t.Fatalf("%s active drag pointer=%q", tc.kind, got)
+		}
+		a.mouse(ctx, event.MouseReleaseEvent{X: 0, Y: 0, Button: event.MouseLeft}, sc)
+		if got := a.mousePointer(sc); got != "default" || a.dragging != "" {
+			t.Fatalf("%s released pointer=%q, drag=%q", tc.kind, got, a.dragging)
+		}
+	}
+	a.confirmAction("done")
+	a.paint(sc)
+	title := findHit(t, a, "dialog-title")
+	a.mouse(ctx, event.MouseMoveEvent{X: title.rect.Min.X, Y: title.rect.Min.Y}, sc)
+	if got := a.mousePointer(sc); got != "grab" {
+		t.Fatalf("dialog title pointer=%q", got)
+	}
+	a.mouse(ctx, event.MouseClickEvent{X: title.rect.Min.X, Y: title.rect.Min.Y, Button: event.MouseLeft}, sc)
+	if got := a.mousePointer(sc); got != "grabbing" {
+		t.Fatalf("pressed dialog title pointer=%q", got)
+	}
+	a.mouse(ctx, event.MouseReleaseEvent{X: title.rect.Min.X, Y: title.rect.Min.Y, Button: event.MouseLeft}, sc)
+	if got := a.mousePointer(sc); got != "grab" {
+		t.Fatalf("released dialog title pointer=%q", got)
+	}
+	a.mouse(ctx, event.MouseMoveEvent{X: 10, Y: 2}, sc)
+	if got := a.mousePointer(sc); got != "default" {
+		t.Fatalf("modal background pointer=%q", got)
+	}
+	cancel := findHit(t, a, "cancel")
+	a.mouse(ctx, event.MouseMoveEvent{X: cancel.rect.Min.X, Y: cancel.rect.Min.Y}, sc)
+	if got := a.mousePointer(sc); got != "pointer" {
+		t.Fatalf("dialog close pointer=%q", got)
+	}
+}
+
+func TestMousePointerTracksLayoutAndLinks(t *testing.T) {
+	a := testApp()
+	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 32})
+	a.paint(sc)
+	ctx := context.Background()
+	a.mouse(ctx, event.MouseMoveEvent{X: 24, Y: 10}, sc)
+	if got := a.mousePointer(sc); got != "ew-resize" {
+		t.Fatalf("initial divider hover=%q", got)
+	}
+	a.sideHidden = true
+	a.paint(sc)
+	if got := a.mousePointer(sc); got != "default" {
+		t.Fatalf("hidden divider pointer=%q", got)
+	}
+	sc.SetString(layout.Pos(24, 10), "link", style.New().Link("https://github.com", ""))
+	if got := a.mousePointer(sc); got != "pointer" {
+		t.Fatalf("hyperlink pointer=%q", got)
+	}
+	a.pendingAction = "done"
+	a.paint(sc)
+	if got := a.mousePointer(sc); got != "default" {
+		t.Fatalf("covered hyperlink pointer=%q", got)
+	}
+	a.pendingAction, a.sideHidden = "", false
+	a.paint(sc)
+	a.mouse(ctx, event.MouseClickEvent{X: 24, Y: 10, Button: event.MouseLeft}, sc)
+	a.sideHidden = true
+	a.paint(sc)
+	if got := a.mousePointer(sc); got != "default" || a.dragging != "" {
+		t.Fatalf("hidden drag pointer=%q, drag=%q", got, a.dragging)
+	}
+	a.mouse(ctx, event.MouseMoveEvent{X: 200, Y: 200}, sc)
+	if got := a.mousePointer(sc); got != "default" {
+		t.Fatalf("out-of-bounds pointer=%q", got)
+	}
+}
+
+func TestVerticalPaneResize(t *testing.T) {
+	a := testApp()
+	a.showPreview = true
+	a.preview = &notifs.Preview{Title: "Preview", Body: strings.Repeat("Body.\n\n", 40)}
+	a.previewOffset = 3
+	preview := a.preview
+	generation := a.generation
+	ctx := context.Background()
+	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 40})
+	drag := func(kind string, y int) {
+		t.Helper()
+		a.paint(sc)
+		h := findHit(t, a, kind)
+		a.mouse(ctx, event.MouseClickEvent{X: h.rect.Min.X, Y: h.rect.Min.Y, Button: event.MouseLeft}, sc)
+		a.mouse(ctx, event.MouseMoveEvent{X: h.rect.Min.X, Y: y, Button: event.MouseLeft}, sc)
+		a.mouse(ctx, event.MouseReleaseEvent{X: h.rect.Min.X, Y: y, Button: event.MouseLeft}, sc)
+		a.paint(sc)
+	}
+	drag("preview-divider", 12)
+	if a.previewHeight != 24 || a.previewBounds.Min.Y != 13 || a.previewOffset != 3 {
+		t.Fatalf("preview resize: height=%d, bounds=%v, offset=%d", a.previewHeight, a.previewBounds, a.previewOffset)
+	}
+	a.showPreview = false
+	a.paint(sc)
+	a.showPreview = true
+	a.paint(sc)
+	if a.previewBounds.Min.Y != 13 {
+		t.Fatal("preview height was not preserved")
+	}
+	a.help = true
+	drag("help-divider", 28)
+	if a.helpHeight != 12 || findHit(t, a, "help-divider").rect.Min.Y != 28 || a.previewBounds.Max.Y != 28 {
+		t.Fatal("help resize did not leave the preview docked above it")
+	}
+	a.help = false
+	a.paint(sc)
+	a.help = true
+	a.paint(sc)
+	if findHit(t, a, "help-divider").rect.Min.Y != 28 {
+		t.Fatal("help height was not preserved")
+	}
+	drag("help-divider", -20)
+	if findHit(t, a, "help-divider").rect.Min.Y != 16 {
+		t.Fatal("help covered the preview or list")
+	}
+	drag("preview-divider", -20)
+	if findHit(t, a, "list").rect.Dy() < 2 || a.previewBounds.Dy() < 5 {
+		t.Fatal("preview resize hid list rows or preview controls")
+	}
+	drag("preview-divider", 100)
+	if a.previewHeight != 6 || a.previewBounds.Dy() != 5 {
+		t.Fatal("preview minimum height was not enforced")
+	}
+	drag("help-divider", 40)
+	if a.helpHeight != 6 {
+		t.Fatal("help minimum height was not enforced")
+	}
+	if a.preview != preview || a.previewGeneration != 0 || a.generation != generation || a.previewOffset != 3 {
+		t.Fatalf("resizing changed preview content, scroll, or fetch state: same=%t previewGeneration=%d generation=%d offset=%d",
+			a.preview == preview, a.previewGeneration, a.generation, a.previewOffset)
+	}
+}
+
+func TestPaneSizesAcrossTerminalResize(t *testing.T) {
+	a := testApp()
+	a.showPreview, a.help = true, true
+	a.previewHeight, a.helpHeight = 18, 12
+	for height := 10; height <= 60; height++ {
+		sc := screen.New(io.Discard, layout.Size{Width: 120, Height: height})
+		a.paint(sc)
+		help := findHit(t, a, "help-divider")
+		if help.rect.Min.Y < 4 || height-help.rect.Min.Y < 6 {
+			t.Fatalf("height=%d: invalid help bounds: %v", height, help.rect)
+		}
+		if height >= 22 {
+			list := findHit(t, a, "list")
+			if list.rect.Dy() < 2 || a.previewBounds.Dy() < 5 || a.previewBounds.Max.Y != help.rect.Min.Y {
+				t.Fatalf("height=%d: list=%v preview=%v help=%v", height, list.rect, a.previewBounds, help.rect)
+			}
+		}
+		if a.previewHeight != 18 || a.helpHeight != 12 {
+			t.Fatal("terminal resize overwrote chosen sizes")
+		}
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"altscreen.io/vision/ansi"
 	"altscreen.io/vision/color"
 	"altscreen.io/vision/event"
+	"altscreen.io/vision/layout"
 	"altscreen.io/vision/program"
 	"altscreen.io/vision/term"
 	"altscreen.io/vision/text"
@@ -167,6 +168,63 @@ func TestTerminalBackgroundFollowsTheme(t *testing.T) {
 		if got := strings.Contains(output.String(), ansi.ResetBackgroundColor); got == noColor {
 			t.Fatalf("noColor=%t: terminal background reset=%t", noColor, got)
 		}
+	}
+}
+
+func TestTerminalMousePointer(t *testing.T) {
+	output := &bellTestOutput{File: os.Stdout}
+	terminal, err := term.New(os.Stdin, output, nil)
+	if errors.Is(err, term.ErrNotTerminal) {
+		t.Skip("requires terminal input and output; run the compiled test in a PTY")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := program.New(terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Finish() })
+	a := testApp()
+	a.program, a.options.NoColor = p, true
+	events := make(chan event.Event, 8)
+	events <- event.MouseMoveEvent{X: 10, Y: 2}
+	events <- event.MouseMoveEvent{X: 11, Y: 2}
+	events <- event.MouseClickEvent{X: 24, Y: 10, Button: event.MouseLeft}
+	events <- event.FocusOutEvent{}
+	close(events)
+	if err := a.run(context.Background(), events); err != nil {
+		t.Fatal(err)
+	}
+	if a.dragging != "" || a.mouseKnown || a.pointerShape != "default" {
+		t.Fatal("focus loss retained a drag or pointer")
+	}
+	for shape, want := range map[string]int{"default": 2, "text": 1, "ew-resize": 1} {
+		if got := strings.Count(output.String(), ansi.SetPointerShape(shape)); got != want {
+			t.Fatalf("%s writes=%d, want %d", shape, got, want)
+		}
+	}
+	a.mouseKnown, a.mousePosition = true, layout.Pos(10, 2)
+	output.err = errors.New("pointer write failed")
+	if err := a.render(); !errors.Is(err, output.err) || !strings.Contains(err.Error(), "set mouse pointer") {
+		t.Fatalf("pointer failure was not reported: %v", err)
+	}
+	if a.pointerShape != "default" {
+		t.Fatal("failed write recorded an unapplied pointer")
+	}
+	output.err = nil
+	if err := a.render(); err != nil {
+		t.Fatal(err)
+	}
+	if a.pointerShape != "text" {
+		t.Fatal("pointer did not recover after a failed write")
+	}
+	output.Reset()
+	if err := p.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), ansi.SetPointerShape("default")) {
+		t.Fatal("terminal cleanup did not reset the pointer")
 	}
 }
 

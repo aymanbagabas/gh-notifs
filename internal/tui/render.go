@@ -68,6 +68,13 @@ func (a *app) render() error {
 	}
 	sc := a.program.Screen()
 	a.paint(sc)
+	pointer := a.mousePointer(sc)
+	if pointer != a.pointerShape {
+		if err := a.program.SetPointerShape(pointer); err != nil {
+			return fmt.Errorf("set mouse pointer: %w", err)
+		}
+		a.pointerShape = pointer
+	}
 	if a.showCursor != sc.CursorVisible() {
 		var err error
 		if a.showCursor {
@@ -172,7 +179,7 @@ func (a *app) paint(sc *screen.Screen) {
 	footerTop := h - 4
 	if a.help {
 		helpLines = helpRows(sc, w-4)
-		footerTop = h - min(len(helpLines)+4, max(6, h/2))
+		footerTop = h - a.helpSize(h, len(helpLines))
 	}
 	left := 0
 	sideBorder := divider
@@ -248,11 +255,8 @@ func (a *app) paint(sc *screen.Screen) {
 	} else if a.sidebar && len(entries) > 0 {
 		put(1, 5, w-2, "View: "+entries[a.sideIndex].label+" (Enter applies)", accent)
 	}
-	listBottom := footerTop
-	showPreview := a.showPreview && footerTop >= 16
-	if showPreview {
-		listBottom = (footerTop + 4) / 2
-	}
+	listBottom := a.previewTop(footerTop)
+	showPreview := listBottom < footerTop
 	a.target(layout.Rect(left, 6, w-left, max(0, listBottom-6)), "list", 0)
 	start := a.page * a.options.PageSize
 	end := min(start+a.options.PageSize, len(a.result.Items))
@@ -410,6 +414,7 @@ func (a *app) paint(sc *screen.Screen) {
 	}
 	if showPreview {
 		put(left, listBottom, w-left, strings.Repeat("─", w-left), divider)
+		a.target(layout.Rect(left, listBottom, w-left, 1), "preview-divider", 0)
 		if left > 0 {
 			put(left-1, listBottom, 1, "├", sideBorder)
 		}
@@ -482,9 +487,10 @@ func (a *app) paint(sc *screen.Screen) {
 	put(counterX, footerTop+1, counterWidth, counter, dim)
 	if a.help {
 		a.target(layout.Rect(0, footerTop, w, h-footerTop), "help", 0)
+		a.target(layout.Rect(0, footerTop, w, 1), "help-divider", 0)
 		visible := h - footerTop - 4
 		a.helpOffset = min(a.helpOffset, max(0, len(helpLines)-visible))
-		label := fmt.Sprintf("Help %d-%d/%d · ↑/↓ or wheel", a.helpOffset+1, a.helpOffset+visible, len(helpLines))
+		label := fmt.Sprintf("Help %d-%d/%d · ↑/↓ or wheel", a.helpOffset+1, min(a.helpOffset+visible, len(helpLines)), len(helpLines))
 		put(2, footerTop, min(sc.StringWidth(label), w-18), label, accent)
 		button(w-14, footerTop, 14, "? Close help", "?", true, 0)
 		for i := 0; i < visible && a.helpOffset+i < len(helpLines); i++ {

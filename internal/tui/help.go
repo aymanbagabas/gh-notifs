@@ -72,7 +72,8 @@ func helpRows(sc *screen.Screen, width int) [][]helpPart {
 			{"Click", "Focus item or use control", ""},
 			{"Shift+click", "Select range", ""},
 			{"Wheel", "Scroll pane", ""},
-			{"Drag divider", "Resize sidebar", ""},
+			{"Drag divider", "Resize sidebar / details", ""},
+			{"Drag top border", "Resize preview / help", ""},
 			{"Drag title", "Move confirmation dialog", ""},
 		}},
 		{"Search", []helpBinding{

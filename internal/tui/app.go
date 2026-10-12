@@ -72,6 +72,7 @@ type app struct {
 	metadataMarkdown  previewRender
 	help              bool
 	helpOffset        int
+	helpHeight        int
 	sidebar           bool
 	sideIndex         int
 	preview           *notifs.Preview
@@ -86,6 +87,7 @@ type app struct {
 	previewNarrow     bool
 	previewBounds     layout.Rectangle
 	showPreview       bool
+	previewHeight     int
 	status            string
 	err               error
 	pendingErrors     []error
@@ -109,6 +111,9 @@ type app struct {
 	sideHidden        bool
 	dragging          string
 	dragOffset        layout.Position
+	mousePosition     layout.Position
+	mouseKnown        bool
+	pointerShape      string
 	hoverID           string
 	hoverSelect       bool
 	completionKey     string
@@ -221,6 +226,7 @@ func (a *app) run(ctx context.Context, events <-chan event.Event) error {
 			case event.FocusOutEvent:
 				a.hoverID, a.hoverSelect = "", false
 				a.dialogHover = 0
+				a.mouseKnown, a.dragging = false, ""
 			}
 		case msg := <-a.messages:
 			a.receive(ctx, msg)
