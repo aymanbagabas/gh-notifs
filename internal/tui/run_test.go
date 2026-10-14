@@ -25,6 +25,34 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestSuspendReportsTerminalFailure(t *testing.T) {
+	output := &bellTestOutput{File: os.Stdout}
+	terminal, err := term.New(os.Stdin, output, nil)
+	if errors.Is(err, term.ErrNotTerminal) {
+		t.Skip("requires terminal input and output; run the compiled test in a PTY")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := program.New(terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		output.err = nil
+		p.Finish()
+	})
+	if err := p.EnterAltScreen(); err != nil {
+		t.Fatal(err)
+	}
+	a := testApp()
+	a.program = p
+	output.err = errors.New("terminal write failed")
+	if err := a.suspend(); !errors.Is(err, output.err) || !strings.Contains(err.Error(), "suspend inbox") {
+		t.Fatalf("suspend error was lost: %v", err)
+	}
+}
+
 type bellTestOutput struct {
 	*os.File
 	bytes.Buffer

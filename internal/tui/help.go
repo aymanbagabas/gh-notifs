@@ -58,6 +58,7 @@ func helpRows(sc *screen.Screen, width int) [][]helpPart {
 			{"Esc", "Dismiss oldest error", "dismiss-error"},
 			{"i", "Initial inbox", "i"},
 			{"? / Esc", "Close help", "?"},
+			{"Ctrl+Z", "Suspend; fg to resume (Unix)", ""},
 			{"q / Ctrl+C", "Quit", "q"},
 		}},
 		{"Actions", []helpBinding{

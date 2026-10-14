@@ -58,6 +58,7 @@ Quote title phrases, such as `"slow uploads"`.
 | `Shift+R` / `Shift+B` | Toggle automatic refresh / bells for this session |
 | `Esc` / click error | Dismiss the oldest error; queued errors appear in order |
 | `?` / `q` | Help / Quit |
+| `Ctrl+Z` | Suspend on macOS/Linux; run `fg` to resume |
 
 Click rows to focus them, click checkmarks to select them, and drag dividers to resize panes.
 Drag the preview or help top border to change its height. Sizes last for the session.
@@ -68,6 +69,7 @@ Subscription actions show a pending label until the API responds.
 Cached notifications and repository history can contain private information.
 
 From a source checkout, run `go run ./examples/inbox -action-delay 3s` to try delayed actions with fictional notifications.
+In that example, press `Ctrl+Z` to return to the shell, then run `fg` to restore the same inbox.
 
 ## Script
 

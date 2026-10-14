@@ -200,6 +200,12 @@ func (a *app) run(ctx context.Context, events <-chan event.Event) error {
 			case error:
 				return ev
 			case event.KeyPressEvent:
+				if event.Key(ev).Matches("ctrl+z") {
+					if err := a.suspend(); err != nil {
+						return err
+					}
+					continue
+				}
 				if a.key(ctx, event.Key(ev)) {
 					return nil
 				}
@@ -233,6 +239,23 @@ func (a *app) run(ctx context.Context, events <-chan event.Event) error {
 			a.receive(ctx, msg)
 		}
 	}
+}
+
+func (a *app) suspend() error {
+	if err := a.program.Suspend(); err != nil {
+		if errors.Is(err, errors.ErrUnsupported) {
+			a.queueError(fmt.Errorf("suspend is not supported on this platform: %w", err))
+			return nil
+		}
+		return fmt.Errorf("suspend inbox: %w", err)
+	}
+	a.hoverID, a.hoverSelect = "", false
+	a.dialogHover = 0
+	a.mouseKnown, a.dragging = false, ""
+	if err := a.program.Resume(); err != nil {
+		return fmt.Errorf("resume inbox: %w", err)
+	}
+	return nil
 }
 
 func (a *app) send(ctx context.Context, msg message) {
