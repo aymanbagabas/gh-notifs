@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aymanbagabas/gh-notifs/internal/config"
@@ -26,6 +27,7 @@ func main() {
 
 func run() error {
 	arrivals := flag.Bool("arrivals", false, "enable automatic refresh and a bell for a fictional arrival after one minute")
+	actionDelay := flag.Duration("action-delay", 0, "delay local action responses to demonstrate immediate inbox updates")
 	flag.Parse()
 	root, err := os.MkdirTemp("", "gh-notifs-inbox-demo-")
 	if err != nil {
@@ -36,7 +38,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	items := demoTransport{
+	items := []notifs.Thread{
 		{Repository: "acme/api", Number: 42, Type: "PullRequest", Title: "Keep uploads responsive on slow connections", Author: "octocat", State: "open", Reason: "review_requested", Unread: true},
 		{Repository: "acme/web", Number: 81, Type: "Issue", Title: "Fix keyboard navigation in the search dialog", Author: "mona", State: "open", Reason: "mention", Unread: true},
 		{Repository: "acme/web", Number: 28, Type: "PullRequest", Title: "Add dark mode to the dashboard", Author: "sam", State: "merged", Reason: "subscribed"},
@@ -57,9 +59,9 @@ func run() error {
 		item.URL = fmt.Sprintf("https://github.com/%s/%s/%d", item.Repository, web, item.Number)
 	}
 	cache.Put(notifs.Endpoint(notifs.Query{}, 1), notifs.Page{Items: items, CheckedAt: time.Now()})
-	var transport http.RoundTripper = items
+	transport := &demoTransport{items: items, actionDelay: *actionDelay}
 	if *arrivals {
-		transport = arrivalTransport{items: items, arrival: time.Now().Add(time.Minute)}
+		transport.arrival = time.Now().Add(time.Minute)
 	}
 	client := &notifs.Client{HTTP: &http.Client{Transport: transport}, Host: "github.com",
 		BaseURL: "https://api.github.com/", GraphQL: "https://api.github.com/graphql", Cache: cache}
@@ -69,31 +71,57 @@ func run() error {
 	}})
 }
 
-type arrivalTransport struct {
-	items   demoTransport
-	arrival time.Time
+// All API responses are local fixtures. No credentials or network access are used.
+type demoTransport struct {
+	mu          sync.Mutex
+	items       []notifs.Thread
+	arrival     time.Time
+	actionDelay time.Duration
 }
 
-func (t arrivalTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	items := t.items
-	if !time.Now().Before(t.arrival) {
-		item := items[0]
+func (t *demoTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	isAction := strings.HasPrefix(r.URL.Path, "/notifications/threads/") &&
+		(r.Method == http.MethodPatch || r.Method == http.MethodDelete || r.Method == http.MethodPut)
+	if isAction {
+		timer := time.NewTimer(t.actionDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.arrival.IsZero() && !time.Now().Before(t.arrival) {
+		item := notifs.Thread{Repository: "acme/api", Type: "PullRequest", State: "open",
+			Author: "octocat", AuthorID: "U_demo_octocat", Reason: "review_requested", Unread: true}
 		item.ID, item.Number = "7", 65
 		item.Title = "New arrival: review the notification workflow"
 		item.UpdatedAt = t.arrival
 		item.SubjectURL = "https://api.github.com/repos/acme/api/pulls/65"
 		item.URL = "https://github.com/acme/api/pull/65"
-		items = append(append(demoTransport(nil), items...), item)
+		t.items = append(t.items, item)
+		t.arrival = time.Time{}
 	}
-	return items.RoundTrip(r)
-}
-
-// All API responses are local fixtures. No credentials or network access are used.
-type demoTransport []notifs.Thread
-
-func (items demoTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	items := t.items
 	var data any
 	switch {
+	case isAction:
+		id, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/notifications/threads/"), "/")
+		for i, item := range items {
+			if item.ID != id {
+				continue
+			}
+			switch r.Method {
+			case http.MethodPatch:
+				t.items[i].Unread = false
+			case http.MethodDelete:
+				t.items = append(t.items[:i], t.items[i+1:]...)
+			}
+			data = map[string]any{}
+			break
+		}
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/notifications"):
 		rows := make([]any, 0, len(items))
 		for _, item := range items {

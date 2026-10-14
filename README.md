@@ -63,7 +63,11 @@ Click rows to focus them, click checkmarks to select them, and drag dividers to 
 Drag the preview or help top border to change its height. Sizes last for the session.
 Supported terminals change the pointer shape over controls and during a drag.
 Previews do not mark notifications read. Opening GitHub in a browser can.
+Mark-read and mark-done update the inbox before the API responds. Failed changes revert and show an error.
+Subscription actions show a pending label until the API responds.
 Cached notifications and repository history can contain private information.
+
+From a source checkout, run `go run ./examples/inbox -action-delay 3s` to try delayed actions with fictional notifications.
 
 ## Script
 

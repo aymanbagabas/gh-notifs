@@ -93,6 +93,7 @@ type app struct {
 	pendingErrors     []error
 	loading           bool
 	acting            bool
+	actionPending     map[string]string
 	pendingAction     string
 	pendingIDs        []string
 	dialogPosition    layout.Position
@@ -292,11 +293,17 @@ func (a *app) startFetch(ctx context.Context, changed, automatic bool) {
 func (a *app) receive(ctx context.Context, msg message) {
 	if msg.action != "" {
 		a.acting = false
+		count := len(a.actionPending)
+		a.actionPending = nil
+		for _, id := range msg.ids {
+			delete(a.selected, id)
+		}
 		if msg.err != nil {
+			a.replaceActionItems(ctx, a.actionItems(msg.result.Items, msg.action, msg.ids))
 			a.queueError(msg.err)
+			a.status = fmt.Sprintf("%s: %d of %d notification(s)", msg.action, len(msg.ids), count)
 		} else {
 			a.status = fmt.Sprintf("%s: %d notification(s)", msg.action, len(msg.ids))
-			a.selected = make(map[string]bool)
 		}
 		a.fetch(ctx, false)
 		return
@@ -488,19 +495,90 @@ func (a *app) act(ctx context.Context, action string, ids []string) {
 	if a.cancelFetch != nil {
 		a.cancelFetch()
 	}
-	a.resetPreview()
 	a.generation++
 	a.loading, a.acting = false, true
+	before := a.result
+	a.actionPending = make(map[string]string, len(ids))
+	for _, id := range ids {
+		a.actionPending[id] = action
+	}
+	a.replaceActionItems(ctx, a.actionItems(before.Items, action, ids))
 	a.workers.Go(func() {
 		var result error
+		var completed []string
 		for _, id := range ids {
 			if err := a.client.Action(ctx, id, action); err != nil {
-				result = errors.Join(result, fmt.Errorf("thread %s: %w", id, err))
+				result = fmt.Errorf("thread %s: %w", id, err)
 				break
 			}
+			completed = append(completed, id)
 		}
-		a.send(ctx, message{action: action, ids: ids, err: result})
+		a.send(ctx, message{action: action, ids: completed, result: &before, err: result})
 	})
+}
+
+func (a *app) actionItems(items []notifs.Thread, action string, ids []string) []notifs.Thread {
+	targets := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		targets[id] = true
+	}
+	// Only read-state filters can change here. Other filters may depend on API-only context.
+	var readQuery notifs.Query
+	for _, term := range a.query.Terms {
+		if term.Field == "is" && (strings.EqualFold(term.Value, "read") || strings.EqualFold(term.Value, "unread")) {
+			readQuery.Terms = append(readQuery.Terms, term)
+		}
+	}
+	updated := make([]notifs.Thread, 0, len(items))
+	for _, item := range items {
+		if targets[item.ID] {
+			switch action {
+			case "done":
+				continue
+			case "read":
+				item.Unread = false
+				if !readQuery.Match(item, "") {
+					continue
+				}
+			}
+		}
+		updated = append(updated, item)
+	}
+	return updated
+}
+
+func (a *app) replaceActionItems(ctx context.Context, items []notifs.Thread) {
+	id := ""
+	if current := a.current(); current != nil {
+		id = current.ID
+	}
+	a.result.Items = items
+	for i, item := range items {
+		if item.ID == id {
+			a.cursor = i
+			break
+		}
+	}
+	a.clamp()
+	a.page = a.cursor / a.options.PageSize
+	if current := a.current(); current == nil || current.ID != id {
+		if a.showPreview {
+			a.loadPreview(ctx)
+		} else {
+			a.resetPreview()
+		}
+	}
+}
+
+func (a *app) itemReason(item notifs.Thread) string {
+	switch a.actionPending[item.ID] {
+	case "subscribe":
+		return "subscribing..."
+	case "unsubscribe":
+		return "unsubscribing..."
+	default:
+		return notifs.ReasonName(item.Reason)
+	}
 }
 
 func (a *app) key(ctx context.Context, key event.Key) bool {

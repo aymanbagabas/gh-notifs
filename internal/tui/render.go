@@ -309,7 +309,7 @@ func (a *app) paint(sc *screen.Screen) {
 		if item.Author != "" {
 			authorWidth = max(authorWidth, sc.StringWidth("@"+notifs.Plain(item.Author)))
 		}
-		reasonWidth = max(reasonWidth, sc.StringWidth(notifs.ReasonName(item.Reason)))
+		reasonWidth = max(reasonWidth, sc.StringWidth(a.itemReason(item)))
 	}
 	reasonWidth = min(reasonWidth, max(0, detailWidth/2-ageWidth-metadataGap))
 	ageX := w - ageWidth
@@ -385,7 +385,7 @@ func (a *app) paint(sc *screen.Screen) {
 
 		ageText := age(item.UpdatedAt)
 		put(ageX, y+1, ageWidth, strings.Repeat(" ", max(0, ageWidth-sc.StringWidth(ageText)))+ageText, metaStyle)
-		if reason := notifs.ReasonName(item.Reason); reason != "" && reasonWidth > 0 {
+		if reason := a.itemReason(item); reason != "" && reasonWidth > 0 {
 			reason = ansi.TruncateMode(reason, reasonWidth, "…", sc.WidthMethod(), sc.AmbiguousWide())
 			put(reasonX, y+1, reasonWidth, strings.Repeat(" ", max(0, reasonWidth-sc.StringWidth(reason)))+reason, metaStyle)
 		}
