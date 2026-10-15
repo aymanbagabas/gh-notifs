@@ -27,7 +27,6 @@ func main() {
 
 func run() error {
 	arrivals := flag.Bool("arrivals", false, "enable automatic refresh and a bell for a fictional arrival after one minute")
-	actionDelay := flag.Duration("action-delay", 0, "delay local action responses to demonstrate immediate inbox updates")
 	flag.Parse()
 	root, err := os.MkdirTemp("", "gh-notifs-inbox-demo-")
 	if err != nil {
@@ -59,7 +58,7 @@ func run() error {
 		item.URL = fmt.Sprintf("https://github.com/%s/%s/%d", item.Repository, web, item.Number)
 	}
 	cache.Put(notifs.Endpoint(notifs.Query{}, 1), notifs.Page{Items: items, CheckedAt: time.Now()})
-	transport := &demoTransport{items: items, actionDelay: *actionDelay}
+	transport := &demoTransport{items: items}
 	if *arrivals {
 		transport.arrival = time.Now().Add(time.Minute)
 	}
@@ -73,24 +72,14 @@ func run() error {
 
 // All API responses are local fixtures. No credentials or network access are used.
 type demoTransport struct {
-	mu          sync.Mutex
-	items       []notifs.Thread
-	arrival     time.Time
-	actionDelay time.Duration
+	mu      sync.Mutex
+	items   []notifs.Thread
+	arrival time.Time
 }
 
 func (t *demoTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	isAction := strings.HasPrefix(r.URL.Path, "/notifications/threads/") &&
 		(r.Method == http.MethodPatch || r.Method == http.MethodDelete || r.Method == http.MethodPut)
-	if isAction {
-		timer := time.NewTimer(t.actionDelay)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-		case <-r.Context().Done():
-			return nil, r.Context().Err()
-		}
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.arrival.IsZero() && !time.Now().Before(t.arrival) {

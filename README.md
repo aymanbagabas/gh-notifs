@@ -68,7 +68,7 @@ Mark-read and mark-done update the inbox before the API responds. Failed changes
 Subscription actions show a pending label until the API responds.
 Cached notifications and repository history can contain private information.
 
-From a source checkout, run `go run ./examples/inbox -action-delay 3s` to try delayed actions with fictional notifications.
+From a source checkout, run `go run ./examples/inbox` to try actions with fictional notifications.
 In that example, press `Ctrl+Z` to return to the shell, then run `fg` to restore the same inbox.
 
 ## Script
