@@ -24,14 +24,16 @@ Both forms use GitHub CLI credentials.
 
 ## Use
 
-Inside a repository, the inbox defaults to that repository. Use `--global` for your full inbox.
+The inbox includes all repositories, regardless of the current directory or `GH_REPO`.
+Use `repo:` or `org:` in the query to limit the scope.
+The scope flags `-R`/`--repo`, `--org`, and `--global` are removed.
 
 ```sh
-gh notifs --global
-gh notifs -R cli/cli
-gh notifs --org acme
-gh notifs --global -q 'is:unread reason:review-requested'
-gh notifs --global -q 'author:@me since:2026-10-01'
+gh notifs
+gh notifs -q 'repo:cli/cli'
+gh notifs -q 'org:acme'
+gh notifs -q 'is:unread reason:review-requested'
+gh notifs -q 'author:@me since:2026-10-01'
 gh notifs --auto-refresh --bell
 gh notifs --no-auto-refresh --no-bell
 gh notifs --config path/to/inbox.yml
@@ -78,16 +80,16 @@ In that example, press `Ctrl+Z` to return to the shell, then run `fg` to restore
 `list` prints TSV. Use `--header` for column names and `-L` to limit results.
 
 ```sh
-gh notifs list --global -L 10 --header
-gh notifs list --global -q 'is:unread' | cut -f8,11
-gh notifs list -R cli/cli -L 1 | gh notifs open
+gh notifs list -L 10 --header
+gh notifs list -q 'is:unread' | cut -f8,11
+gh notifs list -q 'repo:cli/cli' -L 1 | gh notifs open
 ```
 
 **Check the targets before you run an action.** CLI actions change GitHub immediately.
 Use notification thread IDs, not issue or pull request numbers.
 
 ```sh
-gh notifs list -R cli/cli -q 'is:unread' -L 10 > selected.tsv
+gh notifs list -q 'repo:cli/cli is:unread' -L 10 > selected.tsv
 cut -f1,8,11 selected.tsv
 gh notifs read < selected.tsv
 ```

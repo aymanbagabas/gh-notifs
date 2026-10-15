@@ -13,6 +13,8 @@ import (
 
 func main() {
 	for _, input := range []string{
+		"",
+		"org:acme",
 		"reason:mention is:unread",
 		"repo:cli/cli reason:comment is:unread",
 		"reason:participating",
@@ -28,7 +30,7 @@ func main() {
 			os.Exit(1)
 		}
 		requests := query.Requests()
-		fmt.Printf("%s\n%d request(s); multiple requests run concurrently:\n", input, len(requests))
+		fmt.Printf("Query: %q\n%d request(s); multiple requests run concurrently:\n", input, len(requests))
 		for _, request := range requests {
 			fmt.Printf("GET %s\n", notifs.Endpoint(request, 1))
 		}

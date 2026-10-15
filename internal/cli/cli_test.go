@@ -4,14 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"os/exec"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/aymanbagabas/gh-notifs/internal/config"
-	"github.com/aymanbagabas/gh-notifs/internal/notifs"
 )
 
 func TestRefreshSwitchesOverrideConfig(t *testing.T) {
@@ -80,7 +82,7 @@ func TestHelpFlagAlignment(t *testing.T) {
 			t.Fatalf("description is not aligned at column %d: %q", column+1, line)
 		}
 	}
-	for _, alias := range []string{"-q", "-L", "-R", "-h"} {
+	for _, alias := range []string{"-q", "-L", "-h"} {
 		if !strings.Contains(options, alias) {
 			t.Fatalf("help does not describe alias %s", alias)
 		}
@@ -127,9 +129,11 @@ func TestFlagAliases(t *testing.T) {
 			{"limit equals", []string{"-L=0"}, "--limit and --page must be positive"},
 			{"short limit last", []string{"--limit", "0", "-L", "10", "-q", "unknown:value"}, `unsupported query field "unknown"`},
 			{"long limit last", []string{"-L", "10", "--limit", "0"}, "--limit and --page must be positive"},
-			{"repo", []string{"-R", "cli/cli", "--global"}, "--repo, --org, and --global are mutually exclusive"},
+			{"removed repo alias", []string{"-R", "cli/cli"}, "flag provided but not defined: -R"},
+			{"removed repo", []string{"--repo", "cli/cli"}, "flag provided but not defined: -repo"},
+			{"removed org", []string{"--org", "cli"}, "flag provided but not defined: -org"},
+			{"removed global", []string{"--global"}, "flag provided but not defined: -global"},
 			{"missing query", []string{"-q"}, "flag needs an argument"},
-			{"missing repo", []string{"-R"}, "flag needs an argument"},
 			{"missing limit", []string{"-L"}, "flag needs an argument"},
 			{"help", []string{"-h"}, ""},
 		} {
@@ -152,7 +156,6 @@ func TestFlagAliases(t *testing.T) {
 			})
 		}
 	}
-
 }
 
 func TestCommandValidation(t *testing.T) {
@@ -163,9 +166,7 @@ func TestCommandValidation(t *testing.T) {
 		{[]string{"unknown"}, "unknown command"},
 		{[]string{"list", "extra"}, "unexpected argument"},
 		{[]string{"--page", "2"}, "--page requires the list command"},
-		{[]string{"--repo", "cli/cli", "--org", "cli"}, "mutually exclusive"},
 		{[]string{"--hostname", "https://github.com"}, "invalid GitHub hostname"},
-		{[]string{"-R", "example.com/cli/cli", "--hostname", "github.com"}, "repository host differs"},
 		{[]string{"--query", "state:invalid", "list"}, "unsupported state"},
 		{[]string{"-L0"}, "flag provided but not defined: -L0"},
 		{[]string{"--interval", "1m"}, "flag provided but not defined: -interval"},
@@ -240,31 +241,69 @@ func TestFlagParsingBoundaries(t *testing.T) {
 	}
 }
 
-func TestScopeFlagsAddAlternatives(t *testing.T) {
-	for _, opts := range []options{
-		{repo: "cli/cli", queryText: "repo:cli/go-gh is:unread"},
-		{org: "cli", queryText: "org:acme is:unread"},
+type scopeTransport func(*http.Request) (*http.Response, error)
+
+func (f scopeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestQueryScopeIgnoresCurrentRepository(t *testing.T) {
+	root := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "--quiet", root},
+		{"-C", root, "remote", "add", "origin", "https://github.com/local/checkout.git"},
 	} {
-		original := opts
-		q, err := opts.scopedQuery("github.com")
-		if err != nil {
-			t.Fatal(err)
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
-		repos := []string{"cli/cli", "cli/go-gh"}
-		if opts.org != "" {
-			repos = []string{"cli/cli", "acme/app"}
-		} else if len(q.Requests()) != 2 {
-			t.Fatal("repository flag did not produce two request alternatives")
-		}
-		for _, repo := range repos {
-			if !q.Match(notifs.Thread{Repository: repo, Unread: true}, "") ||
-				q.Match(notifs.Thread{Repository: repo}, "") {
-				t.Fatalf("scope %q did not preserve read-state filtering: %+v", repo, q)
+	}
+	t.Chdir(root)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_TOKEN", "fictional-scope-test-token")
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	for _, envRepo := range []string{"", "env/override", "not/a/valid/repo"} {
+		t.Run(envRepo, func(t *testing.T) {
+			t.Setenv("GH_REPO", envRepo)
+			for _, command := range []string{"", "list"} {
+				for _, tc := range []struct{ query, endpoint string }{
+					{"", "/notifications"},
+					{"is:unread", "/notifications"},
+					{"author:@me", "/notifications"},
+					{"repo:cli/cli is:unread", "/repos/cli/cli/notifications"},
+					{"org:acme", "/notifications"},
+				} {
+					calls := 0
+					http.DefaultTransport = scopeTransport(func(r *http.Request) (*http.Response, error) {
+						body := "[]"
+						switch r.URL.Path {
+						case "/user":
+							body = `{"id":1,"node_id":"U_scope","login":"example"}`
+						case tc.endpoint:
+							calls++
+						default:
+							return nil, fmt.Errorf("unexpected request: %s", r.URL)
+						}
+						return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+							Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+					})
+					args := []string{"--hostname", "github.com"}
+					if command != "" {
+						args = append(args, command)
+					}
+					if tc.query != "" {
+						args = append(args, "-q", tc.query)
+					}
+					out, stderr, err := runCommand(t, "", args...)
+					if err != nil || out != "" || stderr != "" || calls != 1 {
+						t.Fatalf("%v: output=%q stderr=%q error=%v requests=%d", args, out, stderr, err, calls)
+					}
+				}
 			}
-		}
-		if q.Match(notifs.Thread{Repository: "other/other", Unread: true}, "") || opts != original {
-			t.Fatal("scope escaped its group or mutated caller options")
-		}
+		})
 	}
 }
 

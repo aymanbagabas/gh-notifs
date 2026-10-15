@@ -14,13 +14,14 @@ import (
 	"github.com/aymanbagabas/gh-notifs/internal/tui"
 	"github.com/cli/go-gh/v2/pkg/auth"
 	"github.com/cli/go-gh/v2/pkg/browser"
-	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/cli/go-gh/v2/pkg/term"
 )
 
 const description = `With terminal input and output, start the notification inbox.
 Otherwise, fetch once and print TSV. The list command always prints TSV.
 Read and unread notifications are included by default.
+The inbox includes all repositories, regardless of the current directory.
+Use repo: or org: in the query to limit the scope.
 
 Query fields:
   repo:OWNER/REPO org:ORG reason:review-requested is:read is:unread
@@ -38,7 +39,7 @@ These specific type filters differ from the website's combined behavior.
 Repeated values in each filter group are alternatives.
 Type and read status are separate groups; every group must match.
 Every title term and date bound must match. AND and OR are title words,
-not operators. -R and --org add alternatives to repo: and org: groups.
+not operators.
 Multiple repo: values use concurrent repository requests with one result limit.
 
 TSV columns (no header unless --header):
@@ -48,11 +49,11 @@ Times use UTC RFC3339; missing values are empty. Tabs, newlines, and
 terminal controls inside values become spaces.`
 
 type options struct {
-	queryText, repo, org, host, configPath string
-	global, header, noColor                bool
-	help, version                          bool
-	limit, page                            int
-	autoRefresh, bell                      *bool
+	queryText, host, configPath string
+	header, noColor             bool
+	help, version               bool
+	limit, page                 int
+	autoRefresh, bell           *bool
 }
 
 func Run(ctx context.Context, args []string, version string) error {
@@ -88,12 +89,8 @@ func parseArgs(args []string) (options, string, []string, error) {
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&opts.queryText, "query", "", "notification query")
 	flags.StringVar(&opts.queryText, "q", "", "notification query")
-	flags.StringVar(&opts.repo, "repo", "", "repository scope")
-	flags.StringVar(&opts.repo, "R", "", "repository scope")
-	flags.StringVar(&opts.org, "org", "", "organization scope")
 	flags.StringVar(&opts.host, "hostname", "", "GitHub host")
 	flags.StringVar(&opts.configPath, "config", "", "inbox configuration file")
-	flags.BoolVar(&opts.global, "global", false, "all repositories")
 	flags.BoolVar(&opts.header, "header", false, "TSV header")
 	flags.BoolVar(&opts.noColor, "no-color", false, "disable colors")
 	flags.BoolVar(&opts.help, "help", false, "show help")
@@ -146,9 +143,6 @@ func parseArgs(args []string) (options, string, []string, error) {
 }
 
 const flagHelp = `  -q, --query TEXT          Filter notifications; repeated values are alternatives
-  -R, --repo OWNER/REPO     Add [HOST/]OWNER/REPO to repository alternatives
-      --org ORG             Add an organization to owner alternatives
-      --global              Ignore the current repository
       --hostname HOST       GitHub host; defaults to the gh configuration
   -L, --limit N             Results per page (default 50)
       --page N              List result page (default 1; list only)
@@ -163,9 +157,9 @@ const flagHelp = `  -q, --query TEXT          Filter notifications; repeated val
 func writeHelp(output io.Writer, command string) error {
 	use, long := "[command] [flags]", description
 	example := `  gh-notifs
-  gh-notifs --global -q 'reason:review-requested'
-  gh-notifs list -R cli/cli -q 'is:unread' -L 10
-  gh-notifs list -R cli/cli -q 'repo:cli/go-gh reason:mention reason:comment'
+  gh-notifs -q 'reason:review-requested'
+  gh-notifs list -q 'repo:cli/cli is:unread' -L 10
+  gh-notifs list -q 'repo:cli/cli repo:cli/go-gh reason:mention reason:comment'
   gh-notifs list -L 10 --header
   gh-notifs list -L 1 | gh-notifs open
   gh-notifs read 123456789
@@ -174,13 +168,13 @@ func writeHelp(output io.Writer, command string) error {
   gh-notifs unsubscribe 123456789`
 	for _, spec := range []struct{ name, use, short, long, example string }{
 		{"list", "list", "Fetch notifications once and print TSV", description,
-			"  gh-notifs list -R cli/cli -q 'is:unread' -L 10\n  gh-notifs list --global --header\n  gh-notifs list --page 2 -L 20"},
+			"  gh-notifs list -q 'repo:cli/cli is:unread' -L 10\n  gh-notifs list --header\n  gh-notifs list --page 2 -L 20"},
 		{"open", "open [URL ...]", "Open notifications in the browser", "Accept HTTPS URLs as arguments, or TSV rows/URLs on stdin.",
-			"  gh-notifs open https://github.com/cli/cli/issues/1\n  gh-notifs list -R cli/cli -L 1 | gh-notifs open\n  gh-notifs open < selected.tsv"},
+			"  gh-notifs open https://github.com/cli/cli/issues/1\n  gh-notifs list -q 'repo:cli/cli' -L 1 | gh-notifs open\n  gh-notifs open < selected.tsv"},
 		{"read", "read [THREAD_ID ...]", "Mark notifications read", "Accept thread IDs as arguments, or TSV rows/IDs on stdin.",
-			"  gh-notifs read 123456789 987654321\n  gh-notifs list -R cli/cli -q 'is:unread' -L 10 | gh-notifs read\n  gh-notifs read < selected.tsv"},
+			"  gh-notifs read 123456789 987654321\n  gh-notifs list -q 'repo:cli/cli is:unread' -L 10 | gh-notifs read\n  gh-notifs read < selected.tsv"},
 		{"done", "done [THREAD_ID ...]", "Mark notifications done", "Accept thread IDs as arguments, or TSV rows/IDs on stdin.",
-			"  gh-notifs done 123456789\n  gh-notifs list -R cli/cli -q 'is:read' -L 10 | gh-notifs done\n  gh-notifs done < selected.tsv"},
+			"  gh-notifs done 123456789\n  gh-notifs list -q 'repo:cli/cli is:read' -L 10 | gh-notifs done\n  gh-notifs done < selected.tsv"},
 		{"subscribe", "subscribe [THREAD_ID ...]", "Subscribe to notifications", "Accept thread IDs as arguments, or TSV rows/IDs on stdin.",
 			"  gh-notifs subscribe 123456789\n  printf '%s\\n' 123456789 987654321 | gh-notifs subscribe\n  gh-notifs subscribe < selected.tsv"},
 		{"unsubscribe", "unsubscribe [THREAD_ID ...]", "Unsubscribe from notifications", "Accept thread IDs as arguments, or TSV rows/IDs on stdin.",
@@ -240,7 +234,7 @@ func (opts options) run(ctx context.Context, command string, args []string, inpu
 			return client.Action(ctx, id, command)
 		})
 	}
-	query, err := opts.scopedQuery(host)
+	query, err := notifs.ParseQuery(opts.queryText)
 	if err != nil {
 		return err
 	}
@@ -292,45 +286,6 @@ func (opts options) inboxOptions(cfg config.Config) tui.Options {
 		inbox.Bell = *opts.bell
 	}
 	return inbox
-}
-
-func (opts options) scopedQuery(host string) (notifs.Query, error) {
-	queryText, repo, org := opts.queryText, opts.repo, opts.org
-	if (repo != "" && org != "") || (opts.global && (repo != "" || org != "")) {
-		return notifs.Query{}, fmt.Errorf("--repo, --org, and --global are mutually exclusive")
-	}
-	query, err := notifs.ParseQuery(queryText)
-	if err != nil {
-		return notifs.Query{}, err
-	}
-	hasScope := false
-	for _, term := range query.Terms {
-		hasScope = hasScope || term.Field == "repo" || term.Field == "org"
-	}
-	if repo == "" && org == "" && !opts.global && !hasScope {
-		if current, err := repository.Current(); err == nil && current.Host == host {
-			repo = current.Owner + "/" + current.Name
-		} else if err != nil && os.Getenv("GH_REPO") != "" {
-			return notifs.Query{}, fmt.Errorf("resolve GH_REPO: %w", err)
-		}
-	}
-	if repo != "" {
-		parsed, err := repository.ParseWithHost(repo, host)
-		if err != nil {
-			return notifs.Query{}, err
-		}
-		if parsed.Host != host {
-			return notifs.Query{}, fmt.Errorf("repository host differs from --hostname")
-		}
-		queryText = "repo:" + parsed.Owner + "/" + parsed.Name + " " + queryText
-	}
-	if org != "" {
-		if strings.ContainsAny(org, " \t\n/:") {
-			return notifs.Query{}, fmt.Errorf("invalid organization name")
-		}
-		queryText = "org:" + org + " " + queryText
-	}
-	return notifs.ParseQuery(strings.TrimSpace(queryText))
 }
 
 func eachInput(input io.Reader, args []string, fn func(string) error) error {
