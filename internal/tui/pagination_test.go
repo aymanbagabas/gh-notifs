@@ -50,7 +50,7 @@ func TestRefreshKeepsCachedAuthorsInProgress(t *testing.T) {
 	}()
 	a.fetch(ctx, false)
 	a.workers.Wait()
-	for _, name := range []string{"oldname", "newname"} {
+	for _, name := range []string{"oldname", "oldname", "newname"} {
 		msg := <-a.messages
 		if msg.err != nil || msg.final != (name == "newname") {
 			t.Fatalf("unexpected refresh message: %+v", msg)

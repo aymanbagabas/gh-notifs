@@ -15,6 +15,38 @@ import (
 	"time"
 )
 
+func TestCachedAuthorQueryDoesNotWaitForLookup(t *testing.T) {
+	started := make(chan struct{})
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	})
+	c.authors = map[string]string{"known": "U_42"}
+	c.Cache.Put(Endpoint(Query{}, 1), Page{Items: []Thread{{ID: "1", AuthorID: "U_42"}}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	lookupDone := make(chan error, 1)
+	unknown, _ := ParseQuery("author:unknown")
+	go func() {
+		_, err := c.resolveAuthors(ctx, unknown)
+		lookupDone <- err
+	}()
+	<-started
+	cachedDone := make(chan Result, 1)
+	known, _ := ParseQuery("author:known")
+	go func() { cachedDone <- c.Cached(known, 10) }()
+	select {
+	case got := <-cachedDone:
+		if len(got.Items) != 1 || got.Items[0].ID != "1" {
+			t.Fatalf("known author was lost during lookup: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cached results waited for an unrelated network lookup")
+	}
+	cancel()
+	<-lookupDone
+}
+
 func TestAuthorMeAfterAccountRename(t *testing.T) {
 	var renamed atomic.Bool
 	var identityCalls atomic.Int32

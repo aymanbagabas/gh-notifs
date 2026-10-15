@@ -86,6 +86,22 @@ func (c *Client) Initialize(ctx context.Context) error {
 	return c.useIdentity(user)
 }
 
+func (c *Client) cachedAuthors(q Query) map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	resolved := make(map[string]string)
+	for _, name := range q.values("author") {
+		id := c.authors[name]
+		if name == "@me" && c.accountID != "" {
+			id = c.accountID
+		}
+		if id != "" {
+			resolved[name] = id
+		}
+	}
+	return resolved
+}
+
 func (c *Client) resolveAuthors(ctx context.Context, q Query) (map[string]string, error) {
 	names := q.values("author")
 	if len(names) == 0 {
@@ -93,23 +109,12 @@ func (c *Client) resolveAuthors(ctx context.Context, q Query) (map[string]string
 	}
 	c.authorMu.Lock()
 	defer c.authorMu.Unlock()
-	if c.authors == nil {
-		c.authors = make(map[string]string)
-	}
-	resolved := make(map[string]string, len(names))
+	resolved := c.cachedAuthors(q)
 	for _, name := range names {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		id := c.authors[name]
-		if name == "@me" {
-			c.mu.Lock()
-			id = c.accountID
-			c.mu.Unlock()
-			if id == "" {
-				id = c.authors[name]
-			}
-		}
+		id := resolved[name]
 		if id == "" {
 			endpoint := "users/" + url.PathEscape(name)
 			if name == "@me" {
@@ -131,7 +136,12 @@ func (c *Client) resolveAuthors(ctx context.Context, q Query) (map[string]string
 				return nil, fmt.Errorf("GitHub returned no node ID for author %q", name)
 			}
 			id = user.NodeID
+			c.mu.Lock()
+			if c.authors == nil {
+				c.authors = make(map[string]string)
+			}
 			c.authors[name] = id
+			c.mu.Unlock()
 		}
 		resolved[name] = id
 	}

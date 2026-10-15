@@ -239,6 +239,10 @@ func TestAuthorDetailsPersistAcrossRestartAndRefresh(t *testing.T) {
 			if status == http.StatusOK {
 				changed.Store(true)
 				result, err = client.Fetch(ctx, query, 10, func(progress Result) {
+					if progress.FromCache {
+						check(progress, "newname")
+						return
+					}
 					if len(progress.Items) != 1 || progress.Items[0].Author != "" || progress.Items[0].State != "" {
 						t.Fatalf("changed notification reused old details: %+v", progress)
 					}
@@ -964,10 +968,14 @@ func TestParticipationFetchAndCache(t *testing.T) {
 			}
 			for _, tc := range []struct {
 				query Query
-				id    string
-			}{{all, "1"}, {participating, "2"}} {
+				ids   []string
+			}{{all, []string{"1", "2", "3"}}, {participating, []string{"2"}}} {
 				cached := c.Cached(tc.query, 10)
-				if len(cached.Items) != 1 || cached.Items[0].ID != tc.id {
+				var ids []string
+				for _, item := range cached.Items {
+					ids = append(ids, item.ID)
+				}
+				if !reflect.DeepEqual(ids, tc.ids) {
 					t.Fatalf("incorrect cached results: %+v", cached)
 				}
 			}
@@ -1016,6 +1024,209 @@ func TestRepositoryHistoryIncludesFilteredOutNotifications(t *testing.T) {
 	}
 	if repos := c.RecentRepositories(); len(repos) != 1 || repos[0].Name != "acme/app" {
 		t.Fatalf("filtered-out notification did not update history: %+v", repos)
+	}
+}
+
+func TestCachedQueriesReuseOtherEndpoints(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("cached queries made a network request")
+		http.NotFound(w, r)
+	})
+	c.accountID = "U_42"
+	now := time.Now().UTC().Truncate(time.Second)
+	item := Thread{ID: "1", Repository: "acme/app", Type: "PullRequest", Number: 7,
+		AuthorID: "U_42", Author: "octocat", State: "open", Unread: true,
+		Title: "Fix uploads", Reason: "mention", UpdatedAt: now}
+	other := item
+	other.ID, other.Repository, other.Type, other.Number = "2", "other/docs", "Issue", 9
+	other.AuthorID, other.State, other.Title = "U_99", "closed", "Update docs"
+	source, _ := ParseQuery("repo:acme/app is:unread")
+	c.Cache.Put(Endpoint(source, 3), Page{Items: []Thread{item}, Next: true, CheckedAt: now})
+	c.Cache.Put(Endpoint(Query{}, 7), Page{Items: []Thread{other}, Next: true, CheckedAt: now})
+	for _, tc := range []struct {
+		query string
+		ids   []string
+	}{
+		{"", []string{"1", "2"}},
+		{"repo:acme/app", []string{"1"}},
+		{"org:other", []string{"2"}},
+		{"author:@me", []string{"1"}},
+		{"state:closed", []string{"2"}},
+		{"is:pr is:unread reason:mention uploads", []string{"1"}},
+		{"repo:acme/app repo:other/docs is:issue is:pr", []string{"1", "2"}},
+		{"since:" + now.Add(-time.Second).Format(time.RFC3339) + " before:" + now.Add(time.Second).Format(time.RFC3339), []string{"1", "2"}},
+		{"before:" + now.Add(-time.Second).Format(time.RFC3339), nil},
+		{"reason:participating", nil},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			q, err := ParseQuery(tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := c.Cached(q, 10)
+			var ids []string
+			for _, item := range got.Items {
+				ids = append(ids, item.ID)
+			}
+			if !reflect.DeepEqual(ids, tc.ids) || !got.FromCache || !got.More {
+				t.Fatalf("query=%q cached=%+v, want %v with incomplete coverage", tc.query, got, tc.ids)
+			}
+		})
+	}
+	item.Unread = false
+	c.Cache.Put(Endpoint(Query{}, 8), Page{Items: []Thread{item}, CheckedAt: now.Add(time.Second)})
+	unread, _ := ParseQuery("repo:acme/app is:unread")
+	if got := c.Cached(unread, 10); len(got.Items) != 0 {
+		t.Fatalf("an older endpoint restored unread state: %+v", got)
+	}
+	participating, _ := ParseQuery("reason:participating")
+	c.Cache.Put(Endpoint(participating, 4), Page{Items: []Thread{other}, CheckedAt: now})
+	if got := c.Cached(participating, 10); len(got.Items) != 1 || got.Items[0].ID != "2" {
+		t.Fatalf("lost verified participation membership: %+v", got)
+	}
+	if err := c.Cache.Invalidate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Cached(Query{}, 10); len(got.Items) != 0 {
+		t.Fatalf("invalidated items remained in the shared cache view: %+v", got)
+	}
+}
+
+func TestCachedDetailQueriesAfterRestart(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("cached queries must not use the network")
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	})
+	items := []Thread{
+		{ID: "1", Type: "PullRequest", Number: 7, Author: "oldname", AuthorID: "U_42", State: "open"},
+		{ID: "2", Type: "Issue", Number: 8, Author: "other", AuthorID: "U_99", State: "closed"},
+	}
+	c.Cache.Put(Endpoint(Query{}, 1), Page{Items: items[:1], Next: true, CheckedAt: time.Now()})
+	c.Cache.Put(Endpoint(Query{}, 2), Page{Items: items[1:], CheckedAt: time.Now()})
+	if err := c.Cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(c.Cache.path)))
+	cache, err := OpenCache(root, c.Host, "test-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := &Client{HTTP: c.HTTP, Cache: cache, accountID: "U_42", authors: map[string]string{"newname": "U_42"}}
+	for _, tc := range []struct {
+		query string
+		ids   []string
+		more  bool
+	}{
+		{"author:@me", []string{"1"}, false},
+		{"author:newname", []string{"1"}, false},
+		{"state:closed", []string{"2"}, false},
+		{"author:@me state:closed", nil, false},
+		{"author:oldname", nil, true},
+		{"author:@me author:unknown", []string{"1"}, true},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			q, err := ParseQuery(tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := Query{Raw: q.Raw, Terms: slices.Clone(q.Terms)}
+			got := restarted.Cached(q, 10)
+			var ids []string
+			for _, item := range got.Items {
+				ids = append(ids, item.ID)
+			}
+			if !reflect.DeepEqual(ids, tc.ids) || !got.FromCache || got.More != tc.more {
+				t.Fatalf("cached=%+v, want ids=%v more=%v", got, tc.ids, tc.more)
+			}
+			if !reflect.DeepEqual(q, before) {
+				t.Fatal("cached filtering mutated the query")
+			}
+		})
+	}
+	cache.Put(Endpoint(Query{}, 2), Page{Items: []Thread{{ID: "3", Type: "Issue", Number: 9}}, Next: false})
+	for _, raw := range []string{"state:open", "author:@me"} {
+		q, _ := ParseQuery(raw)
+		got := restarted.Cached(q, 10)
+		if len(got.Items) != 1 || !got.More {
+			t.Fatalf("missing details treated as complete results: %+v", got)
+		}
+	}
+	if err := cache.Invalidate(); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := ParseQuery("author:@me")
+	if got := restarted.Cached(q, 10); len(got.Items) != 0 || !got.More {
+		t.Fatalf("invalidated pages returned: %+v", got)
+	}
+}
+
+func TestQueryPublishesOtherScopesBeforeFetch(t *testing.T) {
+	var cachedPublished atomic.Bool
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if !cachedPublished.Load() {
+			t.Error("page request started before shared cached matches were published")
+		}
+		if r.URL.Path != "/repos/acme/app/notifications" {
+			t.Errorf("unexpected request: %s", r.URL)
+		}
+		fmt.Fprint(w, "[]")
+	})
+	c.Cache.Put(Endpoint(Query{}, 3), Page{Items: []Thread{
+		{ID: "1", Repository: "acme/app", Unread: true},
+		{ID: "2", Repository: "other/docs", Unread: true},
+	}, CheckedAt: time.Now()})
+	q, err := ParseQuery("repo:acme/app is:unread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Fetch(context.Background(), q, 10, func(result Result) {
+		if result.FromCache {
+			if len(result.Items) != 1 || result.Items[0].ID != "1" || !result.More {
+				t.Errorf("bad shared cached results: %+v", result)
+			}
+			cachedPublished.Store(true)
+		}
+	})
+	if err != nil || !cachedPublished.Load() || len(got.Items) != 0 || got.FromCache {
+		t.Fatalf("fresh results did not reconcile shared cache: %+v, %v", got, err)
+	}
+}
+
+func TestDetailQueryPublishesCacheAfterAuthorLookup(t *testing.T) {
+	var requests atomic.Int32
+	var cachedPublished atomic.Bool
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		switch r.URL.Path {
+		case "/users/newname":
+			fmt.Fprint(w, `{"node_id":"U_42"}`)
+		case "/notifications":
+			if !cachedPublished.Load() {
+				t.Error("page request started before cached matches were published")
+			}
+			fmt.Fprintf(w, "[%s]", threadJSON("1", "PullRequest", "mention"))
+		case "/graphql":
+			fmt.Fprint(w, `{"data":{"v0":{"issueOrPullRequest":{"state":"CLOSED","author":{"id":"U_42","login":"newname"},"url":"https://github.com/acme/app/pull/7"}}}}`)
+		default:
+			t.Errorf("unexpected request: %s", r.URL)
+			http.NotFound(w, r)
+		}
+	})
+	c.Cache.Put(Endpoint(Query{}, 1), Page{Items: []Thread{
+		{ID: "1", Repository: "acme/app", Type: "PullRequest", Number: 7,
+			Author: "oldname", AuthorID: "U_42", State: "open"},
+	}, CheckedAt: time.Now()})
+	q, _ := ParseQuery("author:newname state:open")
+	got, err := c.Fetch(context.Background(), q, 10, func(result Result) {
+		if result.FromCache {
+			if requests.Load() != 1 || len(result.Items) != 1 || result.Items[0].ID != "1" {
+				t.Errorf("bad early cached results: %+v, requests=%d", result, requests.Load())
+			}
+			cachedPublished.Store(true)
+		}
+	})
+	if err != nil || !cachedPublished.Load() || len(got.Items) != 0 || got.FromCache || requests.Load() != 3 {
+		t.Fatalf("fresh results did not reconcile cached state: %+v, %v; requests=%d", got, err, requests.Load())
 	}
 }
 

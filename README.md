@@ -66,9 +66,11 @@ Supported terminals change the pointer shape over controls and during a drag.
 Previews do not mark notifications read. Opening GitHub in a browser can.
 Mark-read and mark-done update the inbox before the API responds. Failed changes revert and show an error.
 Subscription actions show a pending label until the API responds.
+Every query filters the cached notifications after the inbox starts, while fresh results load in the background.
+Cached data is shared across query scopes. Missing pages or details mean the cached list is incomplete.
 Cached notifications and repository history can contain private information.
 
-From a source checkout, run `go run ./examples/inbox` to try actions with fictional notifications.
+From a source checkout, run `go run ./examples/inbox -query 'author:@me'` to try a query with fictional notifications.
 In that example, press `Ctrl+Z` to return to the shell, then run `fg` to restore the same inbox.
 
 ## Script

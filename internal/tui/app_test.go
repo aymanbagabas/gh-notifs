@@ -96,6 +96,32 @@ func TestPaginationProgressDoesNotResetRequestedPage(t *testing.T) {
 	}
 }
 
+func TestCachedQuerySurvivesIncompleteRefresh(t *testing.T) {
+	a := testApp()
+	a.result.FromCache = true
+	a.cursor = 1
+	a.selected["2"] = true
+	ctx := context.Background()
+	partial := notifs.Result{Items: []notifs.Thread{a.result.Items[0]}, More: true}
+	a.receive(ctx, message{generation: a.generation, result: &partial})
+	if len(a.result.Items) != 2 || !a.result.FromCache || a.current().ID != "2" {
+		t.Fatal("partial refresh cleared cached results or moved focus")
+	}
+	a.receive(ctx, message{generation: a.generation, result: &notifs.Result{}, final: true, err: errors.New("offline")})
+	if len(a.result.Items) != 2 || a.err == nil || a.current().ID != "2" {
+		t.Fatal("failed refresh cleared the cached results or hid its error")
+	}
+	fresh := notifs.Result{Items: []notifs.Thread{a.result.Items[1]}}
+	a.receive(ctx, message{generation: a.generation, result: &fresh, final: true})
+	if len(a.result.Items) != 1 || a.result.FromCache || a.current().ID != "2" || !a.selected["2"] {
+		t.Fatal("fresh results did not reconcile the cache while preserving focus and selection")
+	}
+	a.receive(ctx, message{generation: a.generation, result: &notifs.Result{}, final: true})
+	if len(a.result.Items) != 0 {
+		t.Fatal("a verified empty result retained stale rows")
+	}
+}
+
 func TestStaleResultsAndSelection(t *testing.T) {
 	a := testApp()
 	stale := notifs.Result{Items: []notifs.Thread{{ID: "other"}}}

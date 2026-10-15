@@ -285,22 +285,74 @@ func (c *Client) Cached(q Query, limit int) Result {
 	c.mu.Lock()
 	cache := c.Cache
 	c.mu.Unlock()
-	if cache == nil || q.NeedsDetails() {
-		return Result{FromCache: true}
+	if cache == nil {
+		return Result{FromCache: true, More: true}
 	}
+	q.authorIDs = c.cachedAuthors(q)
+	pages := cache.snapshot()
 	var results []Result
 	for _, request := range q.Requests() {
-		results = append(results, cachedRequest(cache, request, limit))
+		results = append(results, cachedRequest(pages, request, limit))
 	}
-	return mergeResults(results, limit)
+	result := mergeResults(results, limit)
+	result.More = result.More || len(q.authorIDs) < len(q.values("author"))
+	covered := make(map[string]bool, len(result.Items))
+	for _, item := range result.Items {
+		covered[item.ID] = true
+	}
+	type candidate struct {
+		item      Thread
+		checkedAt time.Time
+		source    string
+	}
+	items := make(map[string]candidate)
+	participating := make(map[string]time.Time)
+	for endpoint, page := range pages {
+		_, params, _ := strings.Cut(endpoint, "?")
+		isParticipating := strings.Contains("&"+params+"&", "&participating=true&")
+		for _, item := range page.Items {
+			if previous, ok := items[item.ID]; !ok || page.CheckedAt.After(previous.checkedAt) ||
+				page.CheckedAt.Equal(previous.checkedAt) && endpoint < previous.source {
+				items[item.ID] = candidate{item, page.CheckedAt, endpoint}
+			}
+			if isParticipating {
+				if previous, ok := participating[item.ID]; !ok || item.UpdatedAt.After(previous) {
+					participating[item.ID] = item.UpdatedAt
+				}
+			}
+		}
+	}
+	result.Items = nil
+	needsAuthor, needsState := len(q.values("author")) > 0, len(q.values("state")) > 0
+	for id, entry := range items {
+		item := entry.item
+		if needsAuthor && item.AuthorID == "" || needsState && item.State == "" {
+			result.More = true
+			continue
+		}
+		when, member := participating[id]
+		if q.match(item, "", member && when.Equal(item.UpdatedAt)) {
+			result.Items = append(result.Items, item)
+			result.More = result.More || !covered[id]
+			if result.CheckedAt.IsZero() || entry.checkedAt.Before(result.CheckedAt) {
+				result.CheckedAt = entry.checkedAt
+			}
+		}
+	}
+	Sort(result.Items)
+	result.More = result.More || len(result.Items) > limit
+	result.Items = result.Items[:min(limit, len(result.Items))]
+	return result
 }
 
-func cachedRequest(cache *Cache, q Query, limit int) Result {
+func cachedRequest(pages map[string]Page, q Query, limit int) Result {
 	result := Result{FromCache: true}
 	seen := make(map[string]bool)
 	participating := q.participatingOnly()
+	needsAuthor, needsState := len(q.values("author")) > 0, len(q.values("state")) > 0
+	incomplete := false
 	for n := 1; ; n++ {
-		p, ok := cache.Get(Endpoint(q, n))
+		p, ok := pages[Endpoint(q, n)]
 		if !ok {
 			result.More = true
 			break
@@ -309,6 +361,10 @@ func cachedRequest(cache *Cache, q Query, limit int) Result {
 			result.CheckedAt = p.CheckedAt
 		}
 		for _, item := range p.Items {
+			if needsAuthor && item.AuthorID == "" || needsState && item.State == "" {
+				incomplete = true
+				continue
+			}
 			if !seen[item.ID] && q.match(item, "", participating) {
 				seen[item.ID] = true
 				result.Items = append(result.Items, item)
@@ -320,6 +376,7 @@ func cachedRequest(cache *Cache, q Query, limit int) Result {
 			break
 		}
 	}
+	result.More = result.More || incomplete
 	Sort(result.Items)
 	if len(result.Items) > limit {
 		result.Items = result.Items[:limit]
@@ -345,9 +402,21 @@ func (c *Client) Fetch(ctx context.Context, q Query, limit int, progress func(Re
 			err = errors.Join(err, fmt.Errorf("save metadata cache: %w", saveErr))
 		}
 	}()
+	publishCached := func() {
+		if progress != nil {
+			if cached := c.Cached(q, limit); len(cached.Items) > 0 {
+				progress(cached)
+			}
+		}
+	}
+	publishCached()
+	knownAuthors := c.cachedAuthors(q)
 	q.authorIDs, err = c.resolveAuthors(ctx, q)
 	if err != nil {
 		return result, err
+	}
+	if len(knownAuthors) < len(q.authorIDs) {
+		publishCached()
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

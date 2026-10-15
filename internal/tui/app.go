@@ -173,7 +173,6 @@ func Run(ctx context.Context, client *notifs.Client, options Options) (err error
 		cancel()
 		a.workers.Wait()
 	}()
-	a.result = client.Cached(a.query, options.PageSize)
 	a.repositories = client.RecentRepositories()
 	a.fetch(ctx, false)
 	return a.run(ctx, p.Events(ctx))
@@ -294,7 +293,7 @@ func (a *app) startFetch(ctx context.Context, changed, automatic bool) {
 		a.page, a.cursor, a.scroll = 0, 0, 0
 		a.selected = make(map[string]bool)
 		a.preview, a.previewID = nil, ""
-		a.result = a.client.Cached(a.query, a.options.PageSize)
+		a.result = notifs.Result{FromCache: true, More: true}
 	}
 	query, limit := a.query, (a.page+1)*a.options.PageSize
 	if automatic {

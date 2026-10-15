@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -184,6 +186,50 @@ func (c *Cache) Get(key string) (Page, bool) {
 	p, ok := c.pages[key]
 	p.Items = append([]Thread(nil), p.Items...)
 	return p, ok
+}
+
+func (c *Cache) snapshot() map[string]Page {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	pages := make(map[string]Page, len(c.pages))
+	for key, page := range c.pages {
+		page.Items = append([]Thread(nil), page.Items...)
+		pages[key] = page
+	}
+	// A newer terminal page makes older pages beyond it unreachable.
+	type position struct {
+		scope  string
+		number int
+	}
+	positions := make(map[string]position)
+	last := make(map[string]string)
+	for key, page := range pages {
+		prefix, rest, ok := strings.Cut(key, "&page=")
+		if !ok {
+			continue
+		}
+		number, suffix, _ := strings.Cut(rest, "&")
+		n, err := strconv.Atoi(number)
+		if err != nil {
+			continue
+		}
+		scope := prefix + "&" + suffix
+		positions[key] = position{scope, n}
+		if !page.Next {
+			previous, ok := last[scope]
+			if !ok || page.CheckedAt.After(pages[previous].CheckedAt) ||
+				page.CheckedAt.Equal(pages[previous].CheckedAt) && n < positions[previous].number {
+				last[scope] = key
+			}
+		}
+	}
+	for key, pos := range positions {
+		if end, ok := last[pos.scope]; ok && pos.number > positions[end].number &&
+			!pages[key].CheckedAt.After(pages[end].CheckedAt) {
+			delete(pages, key)
+		}
+	}
+	return pages
 }
 
 func (c *Cache) Put(key string, page Page) {

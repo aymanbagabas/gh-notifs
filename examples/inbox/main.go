@@ -27,7 +27,12 @@ func main() {
 
 func run() error {
 	arrivals := flag.Bool("arrivals", false, "enable automatic refresh and a bell for a fictional arrival after one minute")
+	queryText := flag.String("query", "", "initial query for the fictional notifications")
 	flag.Parse()
+	query, err := notifs.ParseQuery(*queryText)
+	if err != nil {
+		return err
+	}
 	root, err := os.MkdirTemp("", "gh-notifs-inbox-demo-")
 	if err != nil {
 		return err
@@ -64,7 +69,7 @@ func run() error {
 	}
 	client := &notifs.Client{HTTP: &http.Client{Transport: transport}, Host: "github.com",
 		BaseURL: "https://api.github.com/", GraphQL: "https://api.github.com/graphql", Cache: cache}
-	return tui.Run(context.Background(), client, tui.Options{PageSize: 6, AutoRefresh: *arrivals, Bell: *arrivals, Scopes: []config.Scope{
+	return tui.Run(context.Background(), client, tui.Options{Query: query, PageSize: 6, AutoRefresh: *arrivals, Bell: *arrivals, Scopes: []config.Scope{
 		{Name: "Inbox"}, {Name: "Unread", Query: "is:unread"},
 		{Name: "Review requested", Query: "reason:review-requested"}, {Name: "Mentioned", Query: "reason:mention"},
 	}})
@@ -96,6 +101,8 @@ func (t *demoTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	items := t.items
 	var data any
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/user":
+		data = map[string]any{"id": 1, "node_id": "U_demo_octocat", "login": "octocat"}
 	case isAction:
 		id, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/notifications/threads/"), "/")
 		for i, item := range items {
