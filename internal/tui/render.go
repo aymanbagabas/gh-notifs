@@ -96,7 +96,7 @@ func (a *app) paint(sc *screen.Screen) {
 	sc.ClearCursorPosition()
 	w, h := sc.Size().Width, sc.Size().Height
 	if w < 40 || h < 10 {
-		sc.SetString(layout.Pos(0, 0), "Resize to at least 40 columns by 10 rows.", style.New())
+		sc.SetString(0, 0, "Resize to at least 40 columns by 10 rows.", style.New())
 		return
 	}
 	normal, accent, dim, selected, warning := style.New(), style.New().Bold(), style.New().Faint(), style.New().Reverse(), style.New().Bold()
@@ -163,7 +163,7 @@ func (a *app) paint(sc *screen.Screen) {
 		var column int
 		queryText, column = queryViewport(sc, a.input, a.caret, w-10)
 		a.showCursor = true
-		sc.SetCursorPosition(layout.Pos(9+column, 2))
+		sc.SetCursorPosition(9+column, 2)
 	}
 	put(1, 2, w-2, "Search: "+queryText, queryStyle)
 	queryLabel := queryStyle.Bold()

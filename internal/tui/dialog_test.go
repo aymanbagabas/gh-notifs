@@ -28,7 +28,7 @@ func TestFloatingDialogDragAndCancel(t *testing.T) {
 		t.Fatal("confirmation is not a centered floating dialog")
 	}
 	for x := original.Min.X + 2 + sc.StringWidth(" Confirm action "); x < original.Max.X-3; x++ {
-		if sc.CellAt(layout.Pos(x, original.Min.Y)).Content() != "─" {
+		if sc.CellAt(x, original.Min.Y).Content() != "─" {
 			t.Fatal("dialog title erased the top border")
 		}
 	}
@@ -70,10 +70,10 @@ func TestDialogButtonHover(t *testing.T) {
 					continue
 				}
 				pos := target.rect.Min
-				before := sc.CellAt(pos).Style
+				before := sc.CellAt(pos.X, pos.Y).Style
 				a.mouse(context.Background(), event.MouseMoveEvent{X: pos.X, Y: pos.Y, Button: event.MouseNone}, sc)
 				a.paint(sc)
-				after := sc.CellAt(pos).Style
+				after := sc.CellAt(pos.X, pos.Y).Style
 				if a.dialogHover != target.index || reflect.DeepEqual(before, after) {
 					t.Fatalf("dialog control %d did not highlight on hover", target.index)
 				}
@@ -85,7 +85,7 @@ func TestDialogButtonHover(t *testing.T) {
 				}
 				a.mouse(context.Background(), event.MouseMoveEvent{X: 0, Y: 0, Button: event.MouseNone}, sc)
 				a.paint(sc)
-				if a.dialogHover != 0 || !reflect.DeepEqual(before, sc.CellAt(pos).Style) {
+				if a.dialogHover != 0 || !reflect.DeepEqual(before, sc.CellAt(pos.X, pos.Y).Style) {
 					t.Fatal("dialog button kept its hover style after the pointer left")
 				}
 			}

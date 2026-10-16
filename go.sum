@@ -1,5 +1,5 @@
-altscreen.io/vision v0.0.0-20261010044444-2099a84383ab h1:0+KkdhBI1i/kY6OYknJnW2xW83lzv5SsxNsZyUy16mc=
-altscreen.io/vision v0.0.0-20261010044444-2099a84383ab/go.mod h1:vuwrvR1BmijUpzQzQ/Tk4BEnx8iHm3h7qOHzTCNseok=
+altscreen.io/vision v0.0.0-20261016005730-139464a1ada3 h1:cfVyvu0W4BY5E7LzD3p8dI+jiPMYsumdnM0AeKikhcM=
+altscreen.io/vision v0.0.0-20261016005730-139464a1ada3/go.mod h1:vuwrvR1BmijUpzQzQ/Tk4BEnx8iHm3h7qOHzTCNseok=
 github.com/MakeNowJust/heredoc v1.0.0 h1:cXCdzVdstXyiTqTvfqk9SDHpKNjxuom+DOlyEeQ4pzQ=
 github.com/MakeNowJust/heredoc v1.0.0/go.mod h1:mG5amYoWBHf8vpLOuehzbGGw0EHxpZZ6lCpQ4fNJ8LE=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=

@@ -68,7 +68,7 @@ func (a *app) mousePointer(sc *screen.Screen) string {
 		}
 	}
 	if a.pendingAction == "" {
-		if cell := sc.CellAt(a.mousePosition); cell != nil && cell.Style.HasLink() {
+		if cell := sc.CellAt(a.mousePosition.X, a.mousePosition.Y); cell != nil && cell.Style.HasLink() {
 			return "pointer"
 		}
 	}

@@ -114,11 +114,11 @@ func TestCompletionDescriptionLayoutAndInsertion(t *testing.T) {
 			if target.rect.Min.X < 0 || target.rect.Max.X > width {
 				t.Fatal("description extended the popup beyond the screen")
 			}
-			if sc.CellAt(layout.Pos(x, target.rect.Min.Y)).Content() != "Y" {
+			if sc.CellAt(x, target.rect.Min.Y).Content() != "Y" {
 				t.Fatal("completion description is missing or misaligned")
 			}
-			descriptionStyle := sc.CellAt(layout.Pos(x, target.rect.Min.Y)).Style
-			labelStyle := sc.CellAt(target.rect.Min.Add(layout.Pos(1, 0))).Style
+			descriptionStyle := sc.CellAt(x, target.rect.Min.Y).Style
+			labelStyle := sc.CellAt(target.rect.Min.X+1, target.rect.Min.Y).Style
 			if descriptionStyle.GetBackground() != labelStyle.GetBackground() {
 				t.Fatal("description lost the selection background")
 			}
@@ -126,7 +126,7 @@ func TestCompletionDescriptionLayoutAndInsertion(t *testing.T) {
 				t.Fatal("description is not muted")
 			}
 			if width == 40 {
-				if sc.CellAt(layout.Pos(target.rect.Max.X-2, target.rect.Min.Y)).Content() != "…" {
+				if sc.CellAt(target.rect.Max.X-2, target.rect.Min.Y).Content() != "…" {
 					t.Fatal("narrow popup did not truncate the description")
 				}
 			} else if !strings.Contains(text.String(sc, color.Disabled), "You were directly @mentioned") {
@@ -284,19 +284,19 @@ func TestCompletionScrollIndicator(t *testing.T) {
 		}
 		top := layout.Pos(first.rect.Max.X-1, first.rect.Min.Y)
 		bottom := layout.Pos(last.rect.Max.X-1, last.rect.Min.Y)
-		if sc.CellAt(top).Content() != "┃" || sc.CellAt(bottom).Content() != "│" {
+		if sc.CellAt(top.X, top.Y).Content() != "┃" || sc.CellAt(bottom.X, bottom.Y).Content() != "│" {
 			t.Fatal("scroll indicator does not start at the top")
 		}
 		values, _, _ := a.suggestions()
 		a.completionIndex = len(values) - 1
 		a.paint(sc)
-		if sc.CellAt(top).Content() != "│" || sc.CellAt(bottom).Content() != "┃" {
+		if sc.CellAt(top.X, top.Y).Content() != "│" || sc.CellAt(bottom.X, bottom.Y).Content() != "┃" {
 			t.Fatal("scroll indicator did not move to the bottom")
 		}
 		a.input, a.caret = []rune("is:un"), 5
 		a.paint(sc)
 		for _, target := range a.hits {
-			if target.kind == "completion" && sc.CellAt(layout.Pos(target.rect.Max.X-1, target.rect.Min.Y)).Content() != " " {
+			if target.kind == "completion" && sc.CellAt(target.rect.Max.X-1, target.rect.Min.Y).Content() != " " {
 				t.Fatal("popup has a scrollbar when all suggestions fit")
 			}
 		}

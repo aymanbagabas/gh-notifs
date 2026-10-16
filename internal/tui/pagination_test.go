@@ -133,7 +133,7 @@ func TestHighlightedItemCounter(t *testing.T) {
 				}
 				var row strings.Builder
 				for x := 0; x < width; x++ {
-					row.WriteString(sc.CellAt(layout.Pos(x, y)).Content())
+					row.WriteString(sc.CellAt(x, y).Content())
 				}
 				if !strings.HasSuffix(row.String(), tt.want+" ") || !strings.Contains(row.String(), "Refreshed") {
 					t.Fatalf("width %d, help=%v: footer %q, want %q at right", width, help, row.String(), tt.want)
@@ -151,15 +151,15 @@ func TestPaginationButtonsShareHeader(t *testing.T) {
 		a.paint(sc)
 		var row strings.Builder
 		for x := 0; x < width; x++ {
-			row.WriteString(sc.CellAt(layout.Pos(x, 4)).Content())
+			row.WriteString(sc.CellAt(x, 4).Content())
 		}
 		for _, want := range []string{"Page 1", "[ Previous", "Next ]"} {
 			if !strings.Contains(row.String(), want) {
 				t.Fatalf("width %d: header missing %q", width, want)
 			}
 		}
-		if sc.CellAt(layout.Pos(width-22, 4)).Style.GetBackground() != theme.Colors(false).Surface ||
-			sc.CellAt(layout.Pos(width-9, 4)).Style.GetBackground() != theme.Colors(false).Selection {
+		if sc.CellAt(width-22, 4).Style.GetBackground() != theme.Colors(false).Surface ||
+			sc.CellAt(width-9, 4).Style.GetBackground() != theme.Colors(false).Selection {
 			t.Fatal("enabled and disabled buttons lack distinct backgrounds")
 		}
 		for _, h := range a.hits {

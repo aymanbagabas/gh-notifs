@@ -130,7 +130,7 @@ func TestPreviewTabPadding(t *testing.T) {
 			want := []string{" 1 Body ", " 2 Discussion ", " 3 Threads "}[target.index]
 			var got strings.Builder
 			for x := target.rect.Min.X; x < target.rect.Max.X; x++ {
-				got.WriteString(sc.CellAt(layout.Pos(x, target.rect.Min.Y)).Content())
+				got.WriteString(sc.CellAt(x, target.rect.Min.Y).Content())
 			}
 			if got.String() != want {
 				t.Fatalf("width %d: tab %d has %q, want %q", width, target.index, got.String(), want)

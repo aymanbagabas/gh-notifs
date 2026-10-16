@@ -21,7 +21,7 @@ func assertButtonMnemonic(t *testing.T, sc *screen.Screen, target hit, label str
 	}
 	for offset, r := range label {
 		x := sc.StringWidth(label[:offset])
-		cell := sc.CellAt(layout.Pos(target.rect.Min.X+x, target.rect.Min.Y))
+		cell := sc.CellAt(target.rect.Min.X+x, target.rect.Min.Y)
 		if cell.Content() != string(r) || cell.Style.GetUnderline() != (offset == index) {
 			t.Fatalf("button %q at %d: content=%q, underline=%v", label, x, cell.Content(), cell.Style.GetUnderline())
 		}
@@ -80,7 +80,7 @@ func TestActiveBorderCornersAndJunctions(t *testing.T) {
 					a.paint(sc)
 					assertBorder := func(x, y int, glyph string, active bool) {
 						t.Helper()
-						cell := sc.CellAt(layout.Pos(x, y))
+						cell := sc.CellAt(x, y)
 						if cell.Content() != glyph || cell.Style.GetBold() != active {
 							t.Fatalf("focus=%s: border at (%d,%d) has glyph=%q, bold=%t; want %q, %t",
 								focus, x, y, cell.Content(), cell.Style.GetBold(), glyph, active)
@@ -133,10 +133,10 @@ func TestPreviewAndPaneColors(t *testing.T) {
 			for y := 27; y < 46; y++ {
 				var line strings.Builder
 				for x := 25; x < 120; x++ {
-					line.WriteString(sc.CellAt(layout.Pos(x, y)).Content())
+					line.WriteString(sc.CellAt(x, y).Content())
 				}
 				if x := strings.Index(line.String(), token); x >= 0 {
-					return sc.CellAt(layout.Pos(25+x, y))
+					return sc.CellAt(25+x, y)
 				}
 			}
 			t.Fatalf("preview does not contain %q", token)
@@ -156,19 +156,19 @@ func TestPreviewAndPaneColors(t *testing.T) {
 			t.Fatal("inline code or emphasis lacks its distinct style")
 		}
 		for _, position := range []layout.Position{layout.Pos(0, 0), layout.Pos(1, 0), layout.Pos(0, 5), layout.Pos(1, 5), layout.Pos(1, 6), layout.Pos(50, 2)} {
-			if sc.CellAt(position).Style.GetBackground() != p.Background {
+			if sc.CellAt(position.X, position.Y).Style.GetBackground() != p.Background {
 				t.Fatalf("header, search, or sidebar has a tinted background at %v", position)
 			}
 		}
-		if sc.CellAt(layout.Pos(26, 26)).Style.GetBackground() != p.Surface {
+		if sc.CellAt(26, 26).Style.GetBackground() != p.Surface {
 			t.Fatal("preview header lost its surface background")
 		}
 		a.edit = true
 		a.paint(sc)
-		if sc.CellAt(layout.Pos(0, 1)).Style.GetForeground() != p.Accent {
+		if sc.CellAt(0, 1).Style.GetForeground() != p.Accent {
 			t.Fatal("active search lacks an accent border")
 		}
-		if sc.CellAt(layout.Pos(50, 2)).Style.GetBackground() != p.Background {
+		if sc.CellAt(50, 2).Style.GetBackground() != p.Background {
 			t.Fatal("active search has a tinted background")
 		}
 	}

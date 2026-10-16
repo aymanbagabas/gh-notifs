@@ -32,7 +32,7 @@ require (
 )
 
 require (
-	altscreen.io/vision v0.0.0-20261010044444-2099a84383ab
+	altscreen.io/vision v0.0.0-20261016005730-139464a1ada3
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/cli/safeexec v1.0.1 // indirect
 	github.com/cli/shurcooL-graphql v0.0.4 // indirect

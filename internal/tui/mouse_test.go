@@ -32,16 +32,16 @@ func TestMouseSelectionDragAndScopes(t *testing.T) {
 	a.paint(sc)
 	for _, y := range []int{8, 9} {
 		for _, x := range []int{34, 119} {
-			if sc.CellAt(layout.Pos(x, y)).Style.GetBackground() != theme.Colors(false).Selection {
+			if sc.CellAt(x, y).Style.GetBackground() != theme.Colors(false).Selection {
 				t.Fatal("selection does not fill both lines")
 			}
 		}
-		if sc.CellAt(layout.Pos(25, y)).Content() != " " {
+		if sc.CellAt(25, y).Content() != " " {
 			t.Fatal("item still has a left border")
 		}
 	}
-	if sc.CellAt(layout.Pos(26, 6)).Style.GetForeground() != theme.Colors(false).Accent ||
-		sc.CellAt(layout.Pos(26, 6)).Content() != "●" {
+	if sc.CellAt(26, 6).Style.GetForeground() != theme.Colors(false).Accent ||
+		sc.CellAt(26, 6).Content() != "●" {
 		t.Fatal("unread dot is not blue")
 	}
 	a.mouse(ctx, event.MouseWheelEvent{X: 90, Y: 9, Button: event.MouseWheelUp}, sc)
@@ -52,7 +52,7 @@ func TestMouseSelectionDragAndScopes(t *testing.T) {
 	a.mouse(ctx, event.MouseMoveEvent{X: 40, Y: 10, Button: event.MouseLeft}, sc)
 	a.mouse(ctx, event.MouseReleaseEvent{X: 40, Y: 10, Button: event.MouseLeft}, sc)
 	a.paint(sc)
-	if a.sideWidth != 41 || a.dragging != "" || sc.CellAt(layout.Pos(40, 4)).Content() != "│" {
+	if a.sideWidth != 41 || a.dragging != "" || sc.CellAt(40, 4).Content() != "│" {
 		t.Fatal("sidebar resize did not update layout")
 	}
 	a.mouse(ctx, event.MouseClickEvent{X: 44, Y: 8, Button: event.MouseLeft}, sc)
@@ -120,11 +120,11 @@ func TestEllipsisAndEmptySidebar(t *testing.T) {
 	a.result.Items[0].Title = strings.Repeat("世界", 80)
 	sc := screen.New(io.Discard, layout.Size{Width: 60, Height: 22})
 	a.paint(sc)
-	if sc.CellAt(layout.Pos(59, 6)).Content() != "…" {
+	if sc.CellAt(59, 6).Content() != "…" {
 		t.Fatal("long title has no Unicode ellipsis")
 	}
 	for _, x := range []int{9, 59} {
-		st := sc.CellAt(layout.Pos(x, 6)).Style
+		st := sc.CellAt(x, 6).Style
 		p := theme.Colors(false)
 		if !st.GetBold() || st.GetForeground() != p.Foreground || st.GetBackground() != p.Selection {
 			t.Fatalf("truncated title lost its text or tail style at column %d", x)
@@ -288,7 +288,7 @@ func TestMousePointerTracksLayoutAndLinks(t *testing.T) {
 	if got := a.mousePointer(sc); got != "default" {
 		t.Fatalf("hidden divider pointer=%q", got)
 	}
-	sc.SetString(layout.Pos(24, 10), "link", style.New().Link("https://github.com", ""))
+	sc.SetString(24, 10, "link", style.New().Link("https://github.com", ""))
 	if got := a.mousePointer(sc); got != "pointer" {
 		t.Fatalf("hyperlink pointer=%q", got)
 	}

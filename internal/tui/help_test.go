@@ -30,13 +30,13 @@ func TestHelpBarUsesSeparateKeysWithoutUnderlines(t *testing.T) {
 				}
 				for offset, r := range control.label {
 					x := sc.StringWidth(control.label[:offset])
-					cell := sc.CellAt(layout.Pos(target.rect.Min.X+x, target.rect.Min.Y))
+					cell := sc.CellAt(target.rect.Min.X+x, target.rect.Min.Y)
 					if cell.Content() != string(r) || cell.Style.GetUnderline() {
 						t.Fatalf("help control %q has an incorrect or underlined cell", control.label)
 					}
 				}
-				key := sc.CellAt(target.rect.Min).Style
-				description := sc.CellAt(target.rect.Min.Add(layout.Pos(2, 0))).Style
+				key := sc.CellAt(target.rect.Min.X, target.rect.Min.Y).Style
+				description := sc.CellAt(target.rect.Min.X+2, target.rect.Min.Y).Style
 				if !key.GetBold() || description.GetBold() {
 					t.Fatal("help keys and descriptions lack distinct styles")
 				}
@@ -65,7 +65,7 @@ func TestHelpExpandsFooterAndRestoresInbox(t *testing.T) {
 	if !a.help || listBottom() >= original {
 		t.Fatal("help did not reduce the inbox height")
 	}
-	if sc.CellAt(layout.Pos(60, listBottom())).Content() != "─" {
+	if sc.CellAt(60, listBottom()).Content() != "─" {
 		t.Fatal("help caption erased the top border")
 	}
 	out := text.String(sc, color.Disabled)

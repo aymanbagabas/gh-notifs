@@ -57,10 +57,9 @@ func (a *app) paintDialog(sc *screen.Screen) {
 	sc.ClearCursorPosition()
 	for row := 0; row < h; row++ {
 		for column := 0; column < w; column++ {
-			pos := layout.Pos(column, row)
-			cell := *sc.CellAt(pos)
+			cell := *sc.CellAt(column, row)
 			cell.Style = cell.Style.Faint()
-			sc.SetCell(pos, &cell)
+			sc.SetCell(column, row, &cell)
 		}
 	}
 	p := theme.Colors(a.light)

@@ -38,15 +38,15 @@ func TestRepositorySectionAndHistorySelection(t *testing.T) {
 	a.result.Items = nil
 	sc := screen.New(io.Discard, layout.Size{Width: 120, Height: 32})
 	a.paint(sc)
-	first := sc.CellAt(layout.Pos(1, 4))
-	second := sc.CellAt(layout.Pos(1, 7))
+	first := sc.CellAt(1, 4)
+	second := sc.CellAt(1, 7)
 	if first.Content() != "V" || second.Content() != "R" ||
 		first.Style.GetForeground() != second.Style.GetForeground() ||
 		!first.Style.GetBold() || !second.Style.GetBold() {
 		t.Fatal("sidebar sections lack matching heading styles")
 	}
 	for x := 1; x < 24; x++ {
-		if sc.CellAt(layout.Pos(x, 6)).Content() != " " {
+		if sc.CellAt(x, 6).Content() != " " {
 			t.Fatal("sidebar sections lack a blank row")
 		}
 	}
