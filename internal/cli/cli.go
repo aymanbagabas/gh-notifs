@@ -18,7 +18,11 @@ import (
 )
 
 const description = `With terminal input and output, start the notification inbox.
-Otherwise, fetch once and print TSV. The list command always prints TSV.
+Otherwise, fetch once and print TSV.
+The list command prints a compact table in a terminal, or TSV when piped.
+Terminal tables include headers and relative times.
+Terminal lists use GH_PAGER, the gh pager setting, or PAGER, in that order.
+Set GH_PAGER=cat or GH_PAGER="" to disable the pager.
 Read and unread notifications are included by default.
 The inbox includes all repositories, regardless of the current directory.
 Use repo: or org: in the query to limit the scope.
@@ -149,7 +153,7 @@ const flagHelp = `  -q, --query TEXT          Filter notifications; repeated val
       --config PATH         Inbox configuration file (interactive inbox only)
       --[no-]auto-refresh   Enable or disable automatic inbox refresh
       --[no-]bell           Enable or disable bells for new unread activity
-      --no-color            Disable TUI color
+      --no-color            Disable colors
       --header              Include column names in TSV
       --version             Print version
   -h, --help                Show help`
@@ -167,7 +171,7 @@ func writeHelp(output io.Writer, command string) error {
   gh-notifs subscribe 123456789
   gh-notifs unsubscribe 123456789`
 	for _, spec := range []struct{ name, use, short, long, example string }{
-		{"list", "list", "Fetch notifications once and print TSV", description,
+		{"list", "list", "Fetch notifications once and print a table or TSV", description,
 			"  gh-notifs list -q 'repo:cli/cli is:unread' -L 10\n  gh-notifs list --header\n  gh-notifs list --page 2 -L 20"},
 		{"open", "open [URL ...]", "Open notifications in the browser", "Accept HTTPS URLs as arguments, or TSV rows/URLs on stdin.",
 			"  gh-notifs open https://github.com/cli/cli/issues/1\n  gh-notifs list -q 'repo:cli/cli' -L 1 | gh-notifs open\n  gh-notifs open < selected.tsv"},
@@ -268,6 +272,9 @@ func (opts options) run(ctx context.Context, command string, args []string, inpu
 	items := result.Items[start:]
 	if err := client.Enrich(ctx, items); err != nil {
 		return err
+	}
+	if command == "list" {
+		return WriteList(ctx, output, stderr, items, header, noColor)
 	}
 	if header {
 		if _, err := fmt.Fprintln(output, Columns); err != nil {

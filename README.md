@@ -40,12 +40,29 @@ Both are off by default.
 
 ## Use with pipes
 
-`list` prints tab-separated values (TSV). Use `-L` to limit results:
+`list` shows a compact table in a terminal, with headers, colors, and relative times.
+Its columns are READ, REFERENCE, TITLE, STATE, REASON, and UPDATED. READ shows `yes` for read notifications and `no` for unread notifications.
+Use `--no-color` or `NO_COLOR=1` to disable colors.
+
+Terminal lists use `GH_PAGER`, the GitHub CLI `pager` setting, or `PAGER`, in that order.
+For example, use `GH_PAGER=less gh notifs list -L 100`.
+Set `GH_PAGER=cat` or `GH_PAGER=""` to disable the pager. Without a configured pager, output goes directly to the terminal.
+For `less`, the default `LESS=FRX` preserves colors and exits when the output fits on one screen.
+An existing `LESS` value takes precedence.
+
+Pipes and files receive the same 12 tab-separated fields (TSV), with UTC RFC3339 times.
+Use `--header` to add TSV column names. Terminal tables always include headers.
+Use `-L` to limit results:
 
 ```sh
-gh notifs list -L 10 --header
+gh notifs list -L 10
+gh notifs list -L 10 --header > notifications.tsv
 gh notifs list -q 'is:unread' | cut -f8,11
 ```
+
+Run `go run ./examples/tsv` for an offline example with fictional data.
+It shows a table in a terminal. Pipe it to `cat` to see the TSV format.
+Use `GH_PAGER="less -+F" go run ./examples/tsv` to try the pager, then press `q` to exit.
 
 **Check the targets before you run an action.** CLI actions change GitHub without confirmation:
 
