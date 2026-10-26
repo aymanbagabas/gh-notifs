@@ -1,0 +1,191 @@
+# altscreen.io/vision v0.0.0-20261016005730-139464a1ada3
+## explicit; go 1.26.5
+altscreen.io/vision/ansi
+altscreen.io/vision/buffer
+altscreen.io/vision/color
+altscreen.io/vision/event
+altscreen.io/vision/internal/poll
+altscreen.io/vision/internal/renderer
+altscreen.io/vision/internal/trace
+altscreen.io/vision/internal/windows
+altscreen.io/vision/layout
+altscreen.io/vision/program
+altscreen.io/vision/screen
+altscreen.io/vision/style
+altscreen.io/vision/term
+altscreen.io/vision/text
+altscreen.io/vision/unicode/graphemeaw
+altscreen.io/vision/unicode/internal/gen
+altscreen.io/vision/unicode/internal/segmenter
+# github.com/alecthomas/chroma/v2 v2.27.0
+## explicit; go 1.25
+github.com/alecthomas/chroma/v2
+github.com/alecthomas/chroma/v2/formatters
+github.com/alecthomas/chroma/v2/formatters/html
+github.com/alecthomas/chroma/v2/formatters/svg
+github.com/alecthomas/chroma/v2/lexers
+github.com/alecthomas/chroma/v2/quick
+github.com/alecthomas/chroma/v2/styles
+# github.com/aymanbagabas/go-osc52/v2 v2.0.1
+## explicit; go 1.16
+github.com/aymanbagabas/go-osc52/v2
+# github.com/aymerick/douceur v0.2.0
+## explicit
+github.com/aymerick/douceur/css
+github.com/aymerick/douceur/parser
+# github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc
+## explicit; go 1.18
+github.com/charmbracelet/colorprofile
+# github.com/charmbracelet/glamour v0.10.0
+## explicit; go 1.23.0
+github.com/charmbracelet/glamour
+github.com/charmbracelet/glamour/ansi
+github.com/charmbracelet/glamour/internal/autolink
+github.com/charmbracelet/glamour/styles
+# github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
+## explicit; go 1.18
+github.com/charmbracelet/lipgloss
+github.com/charmbracelet/lipgloss/table
+# github.com/charmbracelet/x/ansi v0.8.0
+## explicit; go 1.18
+github.com/charmbracelet/x/ansi
+github.com/charmbracelet/x/ansi/kitty
+github.com/charmbracelet/x/ansi/parser
+# github.com/charmbracelet/x/cellbuf v0.0.13
+## explicit; go 1.18
+github.com/charmbracelet/x/cellbuf
+# github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf
+## explicit; go 1.19
+github.com/charmbracelet/x/exp/slice
+# github.com/charmbracelet/x/term v0.2.1
+## explicit; go 1.18
+github.com/charmbracelet/x/term
+# github.com/cli/browser v1.3.0
+## explicit; go 1.21
+github.com/cli/browser
+# github.com/cli/go-gh/v2 v2.16.2
+## explicit; go 1.25.0
+github.com/cli/go-gh/v2/internal/set
+github.com/cli/go-gh/v2/internal/yamlmap
+github.com/cli/go-gh/v2/pkg/api
+github.com/cli/go-gh/v2/pkg/asciisanitizer
+github.com/cli/go-gh/v2/pkg/auth
+github.com/cli/go-gh/v2/pkg/browser
+github.com/cli/go-gh/v2/pkg/config
+github.com/cli/go-gh/v2/pkg/jsonpretty
+github.com/cli/go-gh/v2/pkg/markdown
+github.com/cli/go-gh/v2/pkg/tableprinter
+github.com/cli/go-gh/v2/pkg/term
+github.com/cli/go-gh/v2/pkg/text
+github.com/cli/go-gh/v2/pkg/x/color
+github.com/cli/go-gh/v2/pkg/x/markdown
+# github.com/cli/safeexec v1.0.1
+## explicit; go 1.15
+github.com/cli/safeexec
+# github.com/cli/shurcooL-graphql v0.0.4
+## explicit; go 1.21
+github.com/cli/shurcooL-graphql
+github.com/cli/shurcooL-graphql/ident
+github.com/cli/shurcooL-graphql/internal/jsonutil
+# github.com/clipperhouse/stringish v0.1.1
+## explicit; go 1.18
+github.com/clipperhouse/stringish
+# github.com/clipperhouse/uax29/v2 v2.3.0
+## explicit; go 1.18
+github.com/clipperhouse/uax29/v2/graphemes
+github.com/clipperhouse/uax29/v2/internal/iterators
+# github.com/dlclark/regexp2/v2 v2.2.1
+## explicit; go 1.25
+github.com/dlclark/regexp2/v2
+github.com/dlclark/regexp2/v2/helpers
+github.com/dlclark/regexp2/v2/syntax
+# github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+## explicit; go 1.13
+github.com/google/shlex
+# github.com/gorilla/css v1.0.1
+## explicit; go 1.20
+github.com/gorilla/css/scanner
+# github.com/henvic/httpretty v0.2.0
+## explicit; go 1.25.0
+github.com/henvic/httpretty
+github.com/henvic/httpretty/internal/color
+github.com/henvic/httpretty/internal/header
+# github.com/kr/pretty v0.3.1
+## explicit; go 1.12
+# github.com/lucasb-eyer/go-colorful v1.2.0
+## explicit; go 1.12
+github.com/lucasb-eyer/go-colorful
+# github.com/mattn/go-isatty v0.0.20
+## explicit; go 1.15
+github.com/mattn/go-isatty
+# github.com/mattn/go-runewidth v0.0.19
+## explicit; go 1.20
+github.com/mattn/go-runewidth
+# github.com/microcosm-cc/bluemonday v1.0.27
+## explicit; go 1.19
+github.com/microcosm-cc/bluemonday
+github.com/microcosm-cc/bluemonday/css
+# github.com/muesli/reflow v0.3.0
+## explicit; go 1.13
+github.com/muesli/reflow/ansi
+github.com/muesli/reflow/indent
+github.com/muesli/reflow/padding
+github.com/muesli/reflow/truncate
+github.com/muesli/reflow/wordwrap
+# github.com/muesli/termenv v0.16.0
+## explicit; go 1.17
+github.com/muesli/termenv
+# github.com/rivo/uniseg v0.4.7
+## explicit; go 1.18
+github.com/rivo/uniseg
+# github.com/thlib/go-timezone-local v0.0.8
+## explicit; go 1.16
+github.com/thlib/go-timezone-local/tzlocal
+# github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e
+## explicit; go 1.19
+github.com/xo/terminfo
+# github.com/yuin/goldmark v1.7.8
+## explicit; go 1.19
+github.com/yuin/goldmark
+github.com/yuin/goldmark/ast
+github.com/yuin/goldmark/extension
+github.com/yuin/goldmark/extension/ast
+github.com/yuin/goldmark/parser
+github.com/yuin/goldmark/renderer
+github.com/yuin/goldmark/renderer/html
+github.com/yuin/goldmark/text
+github.com/yuin/goldmark/util
+# github.com/yuin/goldmark-emoji v1.0.5
+## explicit; go 1.15
+github.com/yuin/goldmark-emoji
+github.com/yuin/goldmark-emoji/ast
+github.com/yuin/goldmark-emoji/definition
+# golang.org/x/net v0.55.0
+## explicit; go 1.25.0
+golang.org/x/net/html
+golang.org/x/net/html/atom
+# golang.org/x/sys v0.47.0
+## explicit; go 1.25.0
+golang.org/x/sys/execabs
+golang.org/x/sys/plan9
+golang.org/x/sys/unix
+golang.org/x/sys/windows
+golang.org/x/sys/windows/registry
+# golang.org/x/term v0.45.0
+## explicit; go 1.25.0
+golang.org/x/term
+# golang.org/x/text v0.41.0
+## explicit; go 1.25.0
+golang.org/x/text/cases
+golang.org/x/text/internal
+golang.org/x/text/internal/language
+golang.org/x/text/internal/language/compact
+golang.org/x/text/internal/tag
+golang.org/x/text/language
+golang.org/x/text/runes
+golang.org/x/text/transform
+golang.org/x/text/unicode/cldr
+golang.org/x/text/unicode/norm
+# gopkg.in/yaml.v3 v3.0.1
+## explicit
+gopkg.in/yaml.v3
